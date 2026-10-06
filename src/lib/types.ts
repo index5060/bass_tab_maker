@@ -71,6 +71,8 @@ export interface PracticeDoc {
   /** The original recording, if one has been attached. */
   audioBlob?: Blob;
   audioFileName?: string;
+  /** Where the recording came from, when it was fetched from a YouTube link. */
+  sourceUrl?: string;
 
   /**
    * Separated stems, once they exist. Kept beside the original rather than replacing it —

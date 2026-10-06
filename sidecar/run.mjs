@@ -86,6 +86,8 @@ function score(p) {
   if (p.demucs) s += 10;
   if (p.torch) s += 2;
   if (p.cuda) s += 20;
+  // A tiebreaker only. yt-dlp is one pip install away on any interpreter; a CUDA torch is not.
+  if (p.ytdlp) s += 1;
   return s;
 }
 
@@ -103,6 +105,7 @@ for (const candidate of candidates) {
   const bits = [
     `Python ${info.version}`,
     info.demucs ? 'demucs 있음' : 'demucs 없음',
+    info.ytdlp ? 'yt-dlp 있음' : 'yt-dlp 없음',
     info.cuda ? `CUDA (${info.gpu})` : info.torch ? 'torch CPU 전용' : 'torch 없음',
   ];
   console.log(`  ${info.label.padEnd(10)} ${bits.join(' · ')}`);
@@ -140,11 +143,23 @@ if (!usable.demucs) {
   console.log(`  GPU 사용: ${usable.gpu}`);
 }
 
+if (!usable.ytdlp) {
+  console.log('  YouTube 링크로 가져오려면 yt-dlp를 설치하세요:');
+  console.log(`    ${[usable.command, ...usable.args].join(' ')} -m pip install -U "yt-dlp[default]"`);
+}
+
 /* ----------------------------------------------------------------- launch */
 
 // No shell: probe() already proved this command resolves on its own, and passing args
 // alongside shell:true is what produced Node's DEP0190 warning.
-const child = spawn(usable.command, [...usable.args, SERVER], { stdio: 'inherit' });
+//
+// BASS_SIDECAR_NODE hands yt-dlp the exact Node binary running this launcher. yt-dlp needs a
+// JavaScript runtime to solve YouTube's stream challenges, and Node is the one runtime anyone
+// using this app is guaranteed to have — even when it is not on the PATH Python sees.
+const child = spawn(usable.command, [...usable.args, SERVER], {
+  stdio: 'inherit',
+  env: { ...process.env, BASS_SIDECAR_NODE: process.env.BASS_SIDECAR_NODE ?? process.execPath },
+});
 
 // Ctrl+C should stop the server, not just detach this launcher from it.
 const forward = (signal) => () => child.kill(signal);

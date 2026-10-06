@@ -12,8 +12,8 @@
  * cares which path produced a StemSet.
  */
 
-import type { ProgressFn, Separator } from './separator';
-import type { StemSet } from './stems';
+import { decodeToModelRate, MODEL_SAMPLE_RATE, type ProgressFn, type Separator } from './separator';
+import { encodeWav, type StemSet } from './stems';
 
 export const DEFAULT_SIDECAR_URL = 'http://127.0.0.1:8765';
 
@@ -25,6 +25,18 @@ export interface SidecarInfo {
   demucs: string | null;
   /** Version of basic-pitch when installed there — unlocks AI transcription of the stem. */
   basicPitch: string | null;
+  /** Version of yt-dlp when installed there — unlocks "YouTube link -> audio". */
+  ytdlp: string | null;
+  /**
+   * yt-dlp's YouTube challenge solver (the yt-dlp-ejs package). Without it most videos fail
+   * with a signature error, so the UI warns up front rather than after the failure.
+   */
+  ytdlpEjs: boolean;
+  /**
+   * Whether demucs there can read compressed audio. null for a sidecar too old to say, which
+   * is treated as "yes" — that is how it always behaved.
+   */
+  ffmpeg: boolean | null;
   /** "cuda (RTX 4070)" / "cpu" / "mps" — the difference between minutes and tens of them. */
   device: string;
   models: string[];
@@ -63,6 +75,9 @@ export async function probeSidecar(
     ready: false,
     demucs: null,
     basicPitch: null,
+    ytdlp: null,
+    ytdlpEjs: false,
+    ffmpeg: null,
     device: 'unknown',
     models: [],
     reason,
@@ -78,6 +93,9 @@ export async function probeSidecar(
       demucs?: string | null;
       demucsInstalled?: boolean;
       basicPitch?: string | null;
+      ytdlp?: string | null;
+      ytdlpEjs?: boolean;
+      ffmpeg?: boolean;
       device?: string;
       models?: string[];
     };
@@ -89,6 +107,9 @@ export async function probeSidecar(
       ready: body.demucsInstalled === true,
       demucs: body.demucs ?? null,
       basicPitch: body.basicPitch ?? null,
+      ytdlp: body.ytdlp ?? null,
+      ytdlpEjs: body.ytdlpEjs === true,
+      ffmpeg: typeof body.ffmpeg === 'boolean' ? body.ffmpeg : null,
       device: body.device ?? 'unknown',
       models: body.models ?? [],
       reason: body.demucsInstalled
@@ -122,21 +143,41 @@ async function readWavInfo(blob: Blob): Promise<{ sampleRate: number; durationMs
   return { sampleRate, durationMs };
 }
 
+/**
+ * Whether audio has to become WAV in the browser before the sidecar can separate it.
+ *
+ * demucs reads everything but WAV through ffmpeg. A YouTube download is m4a, so on a machine
+ * without ffmpeg the sidecar would fail on exactly the files this app now fetches for you —
+ * while the browser, which decodes m4a natively, could have handed it a WAV all along.
+ */
+export function needsWavForSidecar(source: Blob, ffmpeg: boolean | null): boolean {
+  return ffmpeg === false && guessExtension(source) !== 'wav';
+}
+
 export class SidecarSeparator implements Separator {
   // Declared as fields rather than constructor parameter properties: the project builds with
   // `erasableSyntaxOnly`, which rules out any TypeScript that emits real code.
   private readonly settings: SidecarSettings;
   private readonly baseUrl: string;
+  private readonly ffmpeg: boolean | null;
 
   constructor(
     settings: SidecarSettings = DEFAULT_SIDECAR_SETTINGS,
     baseUrl: string = DEFAULT_SIDECAR_URL,
+    ffmpeg: boolean | null = null,
   ) {
     this.settings = settings;
     this.baseUrl = baseUrl;
+    this.ffmpeg = ffmpeg;
   }
 
-  async separate(source: Blob, onProgress: ProgressFn): Promise<StemSet> {
+  async separate(original: Blob, onProgress: ProgressFn): Promise<StemSet> {
+    let source = original;
+    if (needsWavForSidecar(original, this.ffmpeg)) {
+      onProgress({ phase: 'decoding', progress: 0, message: 'WAV로 변환 중 (사이드카에 ffmpeg 없음)' });
+      const { channels } = await decodeToModelRate(original);
+      source = new File([encodeWav(channels, MODEL_SAMPLE_RATE)], 'input.wav', { type: 'audio/wav' });
+    }
     onProgress({ phase: 'decoding', progress: 0, message: '사이드카로 보내는 중' });
 
     const ext = guessExtension(source);
@@ -251,6 +292,88 @@ export async function transcribeViaSidecar(
   const body = (await notesRes.json()) as { notes: SidecarNote[] };
   void fetch(`${baseUrl}/jobs/${id}`, { method: 'DELETE' }).catch(() => undefined);
   return body.notes;
+}
+
+/* ----------------------------------------------------------------- youtube */
+
+export interface YouTubeDownload {
+  /** The audio, named after the video so it reads sensibly anywhere a filename shows. */
+  file: File;
+  title: string;
+  artist: string;
+  durationSec: number | null;
+  /** The canonical single-video URL the sidecar actually fetched. */
+  url: string;
+}
+
+interface YouTubeMeta {
+  title: string;
+  artist: string;
+  durationSec: number | null;
+  url: string;
+  ext: string;
+  contentType: string;
+}
+
+/**
+ * Have the sidecar fetch a YouTube video's audio with yt-dlp and hand the file back.
+ *
+ * It has to be the sidecar: a page cannot read YouTube's media streams (no CORS, and the
+ * stream URLs only resolve after running YouTube's own player JavaScript), which is exactly
+ * the problem yt-dlp exists to solve.
+ */
+export async function downloadFromYouTube(
+  url: string,
+  onProgress?: (progress: number, message: string) => void,
+  baseUrl: string = DEFAULT_SIDECAR_URL,
+): Promise<YouTubeDownload> {
+  const submitted = await fetch(`${baseUrl}/youtube`, {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!submitted.ok) {
+    const detail = await submitted.json().catch(() => ({ error: `HTTP ${submitted.status}` }));
+    throw new Error(String(detail.error ?? `HTTP ${submitted.status}`));
+  }
+  const { id } = (await submitted.json()) as { id: string };
+
+  let meta: YouTubeMeta | null = null;
+  for (;;) {
+    await sleep(500);
+    const res = await fetch(`${baseUrl}/jobs/${id}`);
+    if (!res.ok) throw new Error(`작업 상태를 읽지 못했습니다 (HTTP ${res.status}).`);
+    const status = (await res.json()) as JobStatus & { meta: YouTubeMeta | null };
+    if (status.state === 'error') throw new Error(status.error ?? 'YouTube에서 받지 못했습니다.');
+    onProgress?.(status.progress, status.message || 'yt-dlp');
+    if (status.state === 'done') {
+      meta = status.meta;
+      break;
+    }
+  }
+  if (!meta) throw new Error('사이드카가 영상 정보를 돌려주지 않았습니다.');
+
+  const res = await fetch(`${baseUrl}/jobs/${id}/audio`);
+  if (!res.ok) throw new Error(`오디오를 받지 못했습니다 (HTTP ${res.status}).`);
+  const bytes = await res.blob();
+  void fetch(`${baseUrl}/jobs/${id}`, { method: 'DELETE' }).catch(() => undefined);
+
+  return {
+    // The extension matters downstream: guessExtension reads it to tell the sidecar what
+    // container it is getting, and it is what a saved copy will be called.
+    file: new File([bytes], `${fileSafe(meta.title) || 'youtube'}.${meta.ext}`, {
+      type: meta.contentType,
+    }),
+    title: meta.title,
+    artist: meta.artist,
+    durationSec: meta.durationSec,
+    url: meta.url,
+  };
+}
+
+/** Strip what Windows refuses in a filename, and keep it a sane length. */
+export function fileSafe(name: string): string {
+  return name.replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 80).trim();
 }
 
 async function fetchBlob(url: string): Promise<Blob> {

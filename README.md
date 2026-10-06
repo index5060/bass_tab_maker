@@ -3,6 +3,18 @@
 베이스 연습용 로컬 웹앱. 탭 표시 · 속도 조절 · 원본/신디 전환 세 가지가 핵심.
 서버 없음, 계정 없음, 파일은 전부 브라우저 IndexedDB 안에만 있습니다.
 
+**YouTube 링크 하나로 베이스 탭까지:**
+
+```
+YouTube 링크 ──→ ① 음원 파일 ──→ ② 베이스 분리 ──→ ③ 베이스 탭 자동 생성
+                 (yt-dlp)        (Demucs)           (basic-pitch / YIN)
+```
+
+사이드바 맨 위 **"YouTube 링크로 시작"**에 링크를 붙여넣고 "가져오기"를 누르면 세 단계가
+자동으로 이어집니다. 각 단계 결과는 파일로도 받을 수 있습니다 — 음원(`.m4a`), 베이스
+(`-bass.wav`), 탭(`.gp`, Guitar Pro · TuxGuitar · MuseScore에서 열림).
+YouTube 쪽은 로컬 사이드카가 필요합니다 → [YouTube 링크 → 탭](#youtube-링크--탭)
+
 ## 실행
 
 **Windows에서 제일 쉬운 방법: 프로젝트 폴더의 `start.bat`를 더블클릭.**
@@ -31,7 +43,7 @@ npm start            # vite build + vite preview 한 방에
 테스트:
 
 ```bash
-npm test             # 유닛 테스트 (싱크·스템 수학·음정·채보, 146개)
+npm test             # 유닛 테스트 (싱크·스템 수학·음정·채보·링크, 175개)
 npm run test:cold    # 콜드스타트 회귀 테스트 (실제 브라우저)
 npm run test:cursor  # 재생 커서가 실제로 보이고 움직이는지
 npm run test:stems   # cross-origin isolation + 스템 UI 전제조건
@@ -41,6 +53,7 @@ npm run test:wiring  # 음원 붙이면 소스 버튼과 곡 목록이 살아나
 npm run test:dup     # 새로고침해도 곡이 안 불어나는지 / 무음 폴백
 npm run test:autotab # 자동 채보가 실제 앱에서 끝까지 도는지
 npm run test:sidecar # 사이드카 프로토콜 + isolated 페이지의 교차 출처 호출
+npm run test:youtube # 링크 → 음원 → 스템 → 탭 전 구간 + 파일 저장 + 실패 경로
 MODE=preview npm run test:cold   # 빌드 경로까지
 
 npm run replay -- 채보진단.json  # 진단 파일을 실제 채보 파이프라인에 다시 통과
@@ -55,6 +68,8 @@ npm run replay -- 채보진단.json  # 진단 파일을 실제 채보 파이프�
 
 ## 지금 되는 것
 
+- **YouTube 링크 → 음원 → 베이스 분리 → 탭**을 한 번에 (사이드카 + yt-dlp)
+- 음원 / 베이스 스템(WAV) / 탭(Guitar Pro `.gp`)을 각각 파일로 저장
 - `.gp3 / .gp4 / .gp5 / .gpx / .gp` 열기, MusicXML도 alphaTab이 읽는 만큼은 열림
 - alphaTex 텍스트 악보 (`src/lib/demoScore.ts`가 예시 — 탭 에디터 없이 리프 타이핑)
 - 탭 렌더 + 재생 커서 + 자동 스크롤, 탭만/오선보+탭 전환
@@ -133,6 +148,79 @@ ONNX를 전혀 안 쓰므로 그대로 동작합니다.
 
 `npm run test:degrade`가 두 패키지를 node_modules에서 빼내고 새 dev 서버를 띄워
 앱이 여전히 렌더되는지 확인한 뒤 되돌려놓습니다.
+
+---
+
+## YouTube 링크 → 탭
+
+### 준비 (한 번만)
+
+```
+py -m pip install -U "yt-dlp[default]"        REM Windows
+python3 -m pip install -U "yt-dlp[default]"   # macOS / Linux
+```
+
+사이드카를 쓰는 Python에 깔아야 합니다 — `npm run sidecar` 첫 줄에 고른 인터프리터가
+나오고, yt-dlp가 없으면 그 인터프리터용 설치 명령을 그대로 찍어줍니다. 분리(demucs)와
+AI 채보(basic-pitch)까지 사이드카에서 돌리려면 같은 Python에 `demucs basic-pitch`도.
+
+그다음 `start.bat`(또는 `npm run dev` + `npm run sidecar`)로 띄우고, 패널에 `yt-dlp`
+배지가 보이면 준비 끝입니다. 사이드카를 앱보다 늦게 띄웠다면 패널의 **다시 확인**을 누르세요.
+
+### 쓰는 법
+
+1. 사이드바 맨 위 **YouTube 링크로 시작**에 링크 붙여넣기 → **가져오기**
+2. 세 단계가 차례로 돕니다: **음원 받기 → 베이스 분리 → 탭 생성**. 진행률은 단계별로 보입니다.
+3. 끝나면 새 곡이 영상 제목으로 "내 곡"에 저장되고, 화면에는 자동 생성된 탭이 떠 있고,
+   소스는 "베이스만"으로 바뀌어 있습니다.
+
+"받은 뒤 … 자동으로"를 끄면 음원만 받고 멈춥니다. 분리와 채보는 아래 패널 버튼으로
+직접 — 사이드카 설정(모델·shifts)이나 BPM을 먼저 정하고 싶을 때 씁니다.
+
+결과는 각각 파일로 받을 수 있습니다:
+
+| 무엇 | 어디서 | 파일 |
+|---|---|---|
+| 음원 | YouTube 패널 "파일로 저장" | `<제목>.m4a` |
+| 베이스 | 스템 분리 패널 "베이스 WAV 저장" | `<제목>-bass.wav` |
+| 탭 | 상단 "탭 저장 (.gp)" | `<제목>.gp` (Guitar Pro 7 — Guitar Pro · TuxGuitar · MuseScore) |
+
+### 왜 사이드카인가
+
+브라우저는 YouTube 음원을 직접 읽을 수 없습니다. CORS가 막는 것도 있지만, 진짜 스트림
+주소는 YouTube 자체 플레이어 JavaScript를 돌려야 풀리는 형태로 내려옵니다 — 그걸 푸는
+게 정확히 yt-dlp의 일입니다. 그래서 다운로드만 로컬 사이드카가 하고, 받은 파일은 지금까지
+"원본 음원"으로 넣던 파일과 똑같이 취급됩니다. 그 뒤 단계는 기존 코드 그대로입니다.
+
+### 알아둘 것
+
+- **YouTube 주소 해독에는 JavaScript 런타임이 필요합니다.** yt-dlp 기본값은 deno뿐인데,
+  사이드카는 **지금 앱을 띄운 그 Node**를 yt-dlp에 같이 넘깁니다(`npm run sidecar`가
+  경로를 전달). yt-dlp가 Node **22 이상**을 요구하니, 그보다 낮으면 Node를 올리거나
+  [deno](https://deno.land)를 설치하세요.
+- `pip install yt-dlp`만 하면 해독기(`yt-dlp-ejs`)가 빠져서 대부분의 영상이 서명 오류로
+  실패합니다. 꼭 `"yt-dlp[default]"`로 까세요. 빠져 있으면 패널이 미리 알려줍니다.
+- YouTube는 수시로 바뀌고 yt-dlp는 그걸 따라 자주 업데이트됩니다. 잘 되던 게 갑자기
+  실패하면 먼저 `pip install -U "yt-dlp[default]"`.
+- 받는 건 **영상 하나**입니다. 재생목록 링크(`list=`)나 시작 시각(`t=`)이 붙어 있어도
+  영상 id만 남기고 버립니다. 30분 넘는 영상과 라이브 방송은 거절합니다.
+- 음원은 m4a(AAC)를 우선으로 받습니다. 모든 브라우저가 재생·디코딩하고, 같은 곡 WAV의
+  1/10 크기라 IndexedDB에 부담이 없습니다. 사이드카에 ffmpeg가 없으면 demucs가 m4a를 못
+  읽으므로, 그때는 브라우저가 WAV로 바꿔서 보냅니다(자동).
+- 본인이 연습용으로 쓸 권리가 있는 영상에만 쓰세요. 받은 파일은 이 컴퓨터 밖으로 나가지
+  않습니다.
+
+### 보안: 다른 사이트가 사이드카를 부릴 수 없게
+
+사이드카는 `127.0.0.1`에만 열려 있어서 네트워크에서는 닿지 않지만, **브라우저에 열려 있는
+아무 사이트나** localhost로 요청을 보낼 수는 있습니다. 그래서 두 겹으로 막습니다:
+
+- **작업을 시작하는 요청(POST/DELETE)은 localhost 출처만 받습니다.** 브라우저는 교차 출처
+  요청에 항상 `Origin`을 붙이니, 다른 사이트에서 온 건 403으로 끝납니다.
+- **`/youtube`는 YouTube 호스트만 받습니다.** yt-dlp는 거의 아무 URL이나 받아오는 범용
+  추출기를 갖고 있어서, 이게 없으면 사이드카가 "뭐든 대신 받아주는 로컬 프록시"가 됩니다.
+
+`npm run test:youtube`가 둘 다 확인합니다.
 
 ---
 
@@ -498,7 +586,8 @@ src/
     stems.ts          ★ 스템 믹스 수학 + WAV 코덱. 순수 함수, 테스트 17개
     separator.ts        Demucs 브라우저 분리 + 로컬 결과 가져오기 (ONNX 미포함)
     demucsBackend.ts    ONNX를 실제로 쓰는 부분. separator에서 지연 로드만 (함정 셋 참고)
-    sidecar.ts          로컬 사이드카 클라이언트 — 분리 + AI 채보
+    sidecar.ts          로컬 사이드카 클라이언트 — YouTube 다운로드 + 분리 + AI 채보
+    youtube.ts          YouTube 링크 판별 / 영상 하나로 정규화. 테스트 있음
     pitch.ts          ★ YIN 음정 검출. 순수 함수, 테스트 26개
     transcribe.ts     ★ 음표 분할 / 그리드 피팅 / 지판 배치 / alphaTex 작성
     autoTab.ts        ★ 채보 오케스트레이션. notesToAutoTab()을 두 엔진이 공유
@@ -509,6 +598,7 @@ src/
   hooks/
     useAlphaTab.ts      alphaTab 인스턴스 수명주기 (StrictMode 안전)
   components/
+    YouTubePanel.tsx    링크 입력 + 음원→분리→탭 3단계 진행 표시
     Transport.tsx       재생/속도/루프/메트로놈
     SourceToggle.tsx    원본↔신디 + 믹스
     SyncPanel.tsx       앵커 편집기 + 계기판
@@ -519,10 +609,11 @@ scripts/
 coldstart.mjs           ★ 콜드스타트 회귀 테스트
 smoke.mjs               기능 스모크 테스트 (서버가 이미 떠 있다고 가정)
 replay.mjs            ★ 진단 JSON을 실제 파이프라인에 다시 통과시키는 도구
+youtubecheck.mjs      ★ 링크 → 음원 → 스템 → 탭 전 구간 테스트
 sidecar/
-  server.py             분리 + AI 채보 로컬 서버 (표준 라이브러리만)
+  server.py             YouTube 다운로드 + 분리 + AI 채보 로컬 서버 (표준 라이브러리만)
   run.mjs               능력으로 Python 고르는 런처
-  _stubdemucs/          demucs·basic-pitch 스텁 (테스트용)
+  _stubdemucs/          yt-dlp·demucs·basic-pitch 스텁 (테스트용)
 ```
 
 `npm run test:cold`가 가장 중요한 테스트입니다. 에셋 삭제 → 새 서버 → 실제 브라우저로

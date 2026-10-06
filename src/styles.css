@@ -276,3 +276,37 @@ kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
 }
 .diag-table em { color: var(--bad); font-style: normal; }
+
+/* ---------------------------------------------------------------- youtube */
+
+.url-row { display: flex; gap: 6px; }
+.url-row input {
+  flex: 1 1 auto; min-width: 0; background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px;
+  font-family: inherit;
+}
+.url-row input:focus { outline: none; border-color: var(--accent); }
+.url-row .btn, .audio-file-row .btn { flex: 0 0 auto; white-space: nowrap; }
+
+.auto-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 8px 0 2px; cursor: pointer; }
+
+.pipeline { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pipeline-step { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.pipeline-step.todo { color: var(--dim); }
+.pipeline-step.active .phase-line > span:first-child { color: var(--accent); font-weight: 600; }
+.pipeline-step.done { color: var(--good); }
+.pipeline-step.error { color: var(--bad); }
+.step-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin-right: 6px; border-radius: 50%;
+  border: 1px solid currentColor; font-size: 10px; line-height: 1;
+}
+
+.audio-file-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px;
+}
+.audio-file-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.youtube-panel code {
+  background: var(--bg-2); border-radius: 4px; padding: 1px 5px; font-size: 11px;
+}

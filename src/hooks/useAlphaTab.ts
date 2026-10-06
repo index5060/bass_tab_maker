@@ -179,7 +179,29 @@ export function useAlphaTab(options: UseAlphaTabOptions = {}) {
     api.render();
   }, []);
 
-  return { containerRef, viewportRef, apiRef, state, loadAlphaTex, loadFile, setTrack, setStaveProfile };
+  /**
+   * The score currently on screen as a Guitar Pro 7 file (.gp), or null before one has loaded.
+   *
+   * Whatever produced the score — an opened file, typed alphaTex, the auto-transcriber — this
+   * is the form other tab software reads: Guitar Pro, TuxGuitar, MuseScore.
+   */
+  const exportGuitarPro = useCallback((): Uint8Array | null => {
+    const api = apiRef.current;
+    if (!api?.score) return null;
+    return new alphaTab.exporter.Gp7Exporter().export(api.score, api.settings);
+  }, []);
+
+  return {
+    containerRef,
+    viewportRef,
+    apiRef,
+    state,
+    loadAlphaTex,
+    loadFile,
+    setTrack,
+    setStaveProfile,
+    exportGuitarPro,
+  };
 }
 
 /**

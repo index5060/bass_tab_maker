@@ -18,6 +18,7 @@ result = {
     "minor": sys.version_info[1],
     "major": sys.version_info[0],
     "demucs": False,
+    "ytdlp": False,
     "torch": None,
     "cuda": False,
     "gpu": "",
@@ -27,6 +28,13 @@ try:
     import demucs  # noqa: F401
 
     result["demucs"] = True
+except Exception:
+    pass
+
+try:
+    import yt_dlp  # noqa: F401
+
+    result["ytdlp"] = True
 except Exception:
     pass
 

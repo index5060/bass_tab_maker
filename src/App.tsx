@@ -19,7 +19,13 @@ import {
   type AutoTabResult,
   type AutoTabSummary,
 } from './lib/autoTab';
-import { newPracticeDoc, type PracticeDoc, type PlaybackSource, type SyncAnchor } from './lib/types';
+import {
+  newPracticeDoc,
+  type PracticeDoc,
+  type PlaybackSource,
+  type StemSet,
+  type SyncAnchor,
+} from './lib/types';
 import type { SeparationProgress } from './lib/stems';
 import {
   createSongSaver,
@@ -38,6 +44,8 @@ import { encodeSongFile, decodeSongFile, songFileName } from './lib/songFile';
 import {
   probeSidecar,
   transcribeViaSidecar,
+  downloadFromYouTube,
+  fileSafe,
   SidecarSeparator,
   DEFAULT_SIDECAR_SETTINGS,
   type SidecarInfo,
@@ -47,6 +55,7 @@ import { Transport } from './components/Transport';
 import { SourceToggle } from './components/SourceToggle';
 import { SyncPanel } from './components/SyncPanel';
 import { StemPanel } from './components/StemPanel';
+import { YouTubePanel, type PipelineState, type PipelineStep } from './components/YouTubePanel';
 import './styles.css';
 
 const IDLE_PROGRESS: SeparationProgress = { phase: 'idle', progress: 0 };
@@ -88,6 +97,9 @@ export default function App() {
   const [tabBpm, setTabBpm] = useState('');
   /** Full last transcription result, kept for the diagnostic export. */
   const tabDiagRef = useRef<AutoTabResult | null>(null);
+  /** The link -> audio -> stem -> tab run, while it is going and after it ends. */
+  const [pipeline, setPipeline] = useState<PipelineState | null>(null);
+  const [autoPipeline, setAutoPipeline] = useState(true);
 
   const deckRef = useRef<AudioDeck | null>(null);
   if (!deckRef.current) deckRef.current = new AudioDeck();
@@ -95,6 +107,9 @@ export default function App() {
 
   const anchorsRef = useRef<SyncAnchor[]>(doc.syncAnchors);
   anchorsRef.current = doc.syncAnchors;
+  // The song on screen right now, for work that finishes minutes after it started.
+  const docRef = useRef(doc);
+  docRef.current = doc;
   const anchorModeRef = useRef(anchorMode);
   anchorModeRef.current = anchorMode;
 
@@ -134,6 +149,14 @@ export default function App() {
     };
   }, []);
 
+  // The usual order is "open the app, notice the sidecar is needed, start it" — without a way
+  // to look again, that meant reloading the page.
+  const recheckSidecar = useCallback(() => {
+    probeSidecar()
+      .then(setSidecar)
+      .catch(() => undefined);
+  }, []);
+
   // WebGPU probing is async, so capability cannot be a useMemo.
   useEffect(() => {
     let cancelled = false;
@@ -169,8 +192,17 @@ export default function App() {
     setDrift({ ms: report.active.errorMs, action: report.active.corrected });
   }, []);
 
-  const { containerRef, viewportRef, apiRef, state, loadAlphaTex, loadFile, setTrack, setStaveProfile } =
-    useAlphaTab({ onPosition: handlePosition, tabOnly });
+  const {
+    containerRef,
+    viewportRef,
+    apiRef,
+    state,
+    loadAlphaTex,
+    loadFile,
+    setTrack,
+    setStaveProfile,
+    exportGuitarPro,
+  } = useAlphaTab({ onPosition: handlePosition, tabOnly });
 
   /* ---------------------------------------------------------------- score */
 
@@ -440,36 +472,115 @@ export default function App() {
     setDoc((d) => ({ ...d, syncAnchors: [...d.syncAnchors, anchor], updatedAt: Date.now() }));
   }, [apiRef, state.currentBarIndex]);
 
-  const onSeparate = useCallback(async () => {
-    if (!doc.audioBlob) return;
-    setSepBusy(true);
-    setSepError(null);
-    setSepProgress({ phase: 'decoding', progress: 0 });
-    try {
-      // The sidecar runs the real demucs with real settings, so prefer it whenever it is
-      // there. Loaded lazily either way — a missing onnxruntime-web install must cost this
-      // button, not the whole app.
-      const separator =
-        sidecar?.ready && useSidecar
-          ? new SidecarSeparator(sidecarSettings)
-          : (separatorRef.current ??= await loadDemucsSeparator());
-      const stems = await separator.separate(doc.audioBlob, setSepProgress);
-      setDoc((d) => ({ ...d, stems, updatedAt: Date.now() }));
-      setSource('bass');
-    } catch (e) {
-      setSepError(e instanceof Error ? e.message : String(e));
-      setSepProgress({ phase: 'error', progress: 0 });
-    } finally {
-      setSepBusy(false);
+  /**
+   * Put a finished result on the song it was computed for.
+   *
+   * Separation runs for minutes, and the YouTube pipeline longer. Applying the result to
+   * "whatever is open now" would land one song's stems on another if you looked at a different
+   * song in the meantime — so it goes to the song by id, straight to storage if it is closed.
+   */
+  const applyToSong = useCallback(async (songId: string, patch: Partial<PracticeDoc>) => {
+    if (docRef.current.id === songId) {
+      setDoc((d) => (d.id === songId ? { ...d, ...patch, updatedAt: Date.now() } : d));
+      return;
     }
-  }, [doc.audioBlob, sidecar, useSidecar, sidecarSettings]);
+    const saved = await getSong(songId);
+    if (!saved) return;
+    await saveSong({ ...saved, ...patch });
+    setLibrary(await listSongs());
+  }, []);
+
+  /** Bass + backing out of one recording. Throws; the caller decides where to say so. */
+  const runSeparation = useCallback(
+    async (songId: string, audio: Blob): Promise<StemSet> => {
+      setSepBusy(true);
+      setSepError(null);
+      setSepProgress({ phase: 'decoding', progress: 0 });
+      try {
+        // The sidecar runs the real demucs with real settings, so prefer it whenever it is
+        // there. Loaded lazily either way — a missing onnxruntime-web install must cost this
+        // button, not the whole app.
+        const separator =
+          sidecar?.ready && useSidecar
+            ? new SidecarSeparator(sidecarSettings, undefined, sidecar.ffmpeg)
+            : (separatorRef.current ??= await loadDemucsSeparator());
+        const stems = await separator.separate(audio, setSepProgress);
+        await applyToSong(songId, { stems });
+        if (docRef.current.id === songId) setSource('bass');
+        return stems;
+      } catch (e) {
+        setSepProgress({ phase: 'error', progress: 0 });
+        throw e;
+      } finally {
+        setSepBusy(false);
+      }
+    },
+    [sidecar, useSidecar, sidecarSettings, applyToSong],
+  );
 
   /**
-   * Read a tab off the isolated bass stem.
+   * Read a tab off an isolated bass stem and write it into the song's score.
    *
    * Only ever runs on the separated stem — YIN assumes one note at a time, so pointed at a
-   * full mix it returns noise. The result overwrites the score, which is why it is gated
-   * behind a confirmation when there is already something written there.
+   * full mix it returns noise. `bpm` is passed in rather than read from state so a run that
+   * started from one song can never pick up a tempo typed for another.
+   */
+  const runTranscription = useCallback(
+    async (songId: string, stems: StemSet, title: string, bpm?: number): Promise<AutoTabResult> => {
+      setTabBusy(true);
+      try {
+        // Prefer the trained model on the sidecar when it is there — a learned onset+pitch
+        // network is a different class of accuracy from the built-in autocorrelation, and it
+        // is the same family of tech behind tab sites' "AI draft" features. Everything after
+        // "we have notes" is shared with the local path (notesToAutoTab).
+        let result: AutoTabResult;
+        if (sidecar?.reachable && sidecar.basicPitch && useSidecar) {
+          setTabProgress({ phase: 'analysing', progress: 0.3, message: 'basic-pitch (사이드카)' });
+          const raw = await transcribeViaSidecar(stems.bass, undefined, (message) =>
+            setTabProgress({ phase: 'analysing', progress: 0.6, message }),
+          );
+          setTabProgress({ phase: 'transcribing', progress: 0.85, message: '탭으로 정리하는 중' });
+          result = notesToAutoTab({
+            notes: raw,
+            durationMs: stems.durationMs,
+            title,
+            bpm,
+            engine: 'basic-pitch',
+          });
+        } else {
+          result = await transcribeBassStem(stems.bass, { title, bpm, onProgress: setTabProgress });
+        }
+        await applyToSong(songId, { scoreKind: 'alphatex', scoreData: result.alphaTex });
+        if (docRef.current.id === songId) {
+          tabDiagRef.current = result;
+          setTabResult({
+            notes: result.noteCount,
+            bpm: result.bpm,
+            engine: result.engine,
+            confidence: result.meanConfidence,
+            stats: result.stats,
+          });
+        }
+        return result;
+      } finally {
+        setTabBusy(false);
+      }
+    },
+    [sidecar, useSidecar, applyToSong],
+  );
+
+  const onSeparate = useCallback(async () => {
+    if (!doc.audioBlob) return;
+    try {
+      await runSeparation(doc.id, doc.audioBlob);
+    } catch (e) {
+      setSepError(e instanceof Error ? e.message : String(e));
+    }
+  }, [doc.id, doc.audioBlob, runSeparation]);
+
+  /**
+   * The result overwrites the score, which is why it is gated behind a confirmation when
+   * there is already an opened file there.
    */
   const onTranscribe = useCallback(async () => {
     const stems = doc.stems;
@@ -477,57 +588,79 @@ export default function App() {
     if (!isBlankScore(doc.scoreData) && doc.scoreKind === 'gp') {
       if (!window.confirm('불러온 악보를 자동 채보 결과로 덮어씁니다. 계속할까요?')) return;
     }
-    setTabBusy(true);
     setSepError(null);
+    const typedBpm = Number(tabBpm);
+    const bpm = Number.isFinite(typedBpm) && typedBpm > 0 ? typedBpm : undefined;
     try {
-      const typedBpm = Number(tabBpm);
-      const bpm = Number.isFinite(typedBpm) && typedBpm > 0 ? typedBpm : undefined;
-
-      // Prefer the trained model on the sidecar when it is there — a learned onset+pitch
-      // network is a different class of accuracy from the built-in autocorrelation, and it
-      // is the same family of tech behind tab sites' "AI draft" features. Everything after
-      // "we have notes" is shared with the local path (notesToAutoTab).
-      let result: AutoTabResult;
-      if (sidecar?.reachable && sidecar.basicPitch && useSidecar) {
-        setTabProgress({ phase: 'analysing', progress: 0.3, message: 'basic-pitch (사이드카)' });
-        const raw = await transcribeViaSidecar(stems.bass, undefined, (message) =>
-          setTabProgress({ phase: 'analysing', progress: 0.6, message }),
-        );
-        setTabProgress({ phase: 'transcribing', progress: 0.85, message: '탭으로 정리하는 중' });
-        result = notesToAutoTab({
-          notes: raw,
-          durationMs: stems.durationMs,
-          title: doc.title,
-          bpm,
-          engine: 'basic-pitch',
-        });
-      } else {
-        result = await transcribeBassStem(stems.bass, {
-          title: doc.title,
-          bpm,
-          onProgress: setTabProgress,
-        });
-      }
-      setDoc((d) => ({
-        ...d,
-        scoreKind: 'alphatex',
-        scoreData: result.alphaTex,
-        updatedAt: Date.now(),
-      }));
-      tabDiagRef.current = result;
-      setTabResult({
-        notes: result.noteCount,
-        bpm: result.bpm,
-        engine: result.engine,
-        confidence: result.meanConfidence,
-        stats: result.stats,
-      });
+      await runTranscription(doc.id, stems, doc.title, bpm);
     } catch (e) {
       setSepError(`채보 실패: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setTabBusy(false);
     }
-  }, [doc.stems, doc.title, doc.scoreData, doc.scoreKind, tabBpm, sidecar, useSidecar]);
+  }, [doc.id, doc.stems, doc.title, doc.scoreData, doc.scoreKind, tabBpm, runTranscription]);
+
+  /**
+   * YouTube link -> audio file -> bass stem -> tab, in one go.
+   *
+   * Each step is the same code the individual buttons run; this only chains them and keeps
+   * the three-step progress on screen. With `autoPipeline` off it stops after the download,
+   * leaving separation and transcription to the buttons as before.
+   */
+  const onImportYouTube = useCallback(
+    async (url: string) => {
+      const auto = autoPipeline;
+      let step: PipelineStep = 'download';
+      setPipeline({ step, auto, progress: 0, message: '사이드카에 요청하는 중' });
+      try {
+        const download = await downloadFromYouTube(url, (progress, message) =>
+          setPipeline({ step: 'download', auto, progress, message }),
+        );
+
+        // An untouched "새 곡" is taken over rather than left behind as an empty row.
+        const open = docRef.current;
+        const reuse = open.id !== DEMO_DOC_ID && !open.audioBlob && isBlankScore(open.scoreData);
+        const song = newPracticeDoc({
+          id: reuse ? open.id : crypto.randomUUID(),
+          title: download.title,
+          artist: download.artist,
+          scoreKind: 'alphatex',
+          scoreData: blankAlphaTex(8, 120, download.title),
+          audioBlob: download.file,
+          audioFileName: download.file.name,
+          sourceUrl: download.url,
+        });
+        // Saved now rather than through the debounced autosave, so the song is in the library
+        // before the long steps start — results from them are applied to it by id.
+        await saveSong(song);
+        setLibrary(await listSongs());
+        setDoc(song);
+        setSpeed(1);
+        setSource('original');
+        setTabBpm('');
+        setTabResult(null);
+        tabDiagRef.current = null;
+        setSepError(null);
+        setSepProgress(IDLE_PROGRESS);
+
+        if (!auto) {
+          setPipeline({ step: 'done', auto, progress: 1 });
+          return;
+        }
+
+        step = 'separate';
+        setPipeline({ step, auto, progress: 0 });
+        const stems = await runSeparation(song.id, download.file);
+
+        step = 'transcribe';
+        setPipeline({ step, auto, progress: 0 });
+        await runTranscription(song.id, stems, song.title);
+
+        setPipeline({ step: 'done', auto, progress: 1 });
+      } catch (e) {
+        setPipeline({ step, auto, progress: 0, error: e instanceof Error ? e.message : String(e) });
+      }
+    },
+    [autoPipeline, runSeparation, runTranscription],
+  );
 
   /**
    * Rewrite the last transcription at half or double the tempo.
@@ -600,13 +733,32 @@ export default function App() {
       detectedNotes: result.detectedNotes,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${doc.title.replace(/[\\/:*?"<>|]/g, '_')}-채보진단.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    downloadBlob(blob, `${doc.title.replace(/[\\/:*?"<>|]/g, '_')}-채보진단.json`);
   }, [doc.title]);
+
+  /* -------------------------------------------- each step's result as a file */
+
+  const onSaveAudio = useCallback(() => {
+    if (!doc.audioBlob) return;
+    downloadBlob(doc.audioBlob, doc.audioFileName ?? `${fileSafe(doc.title) || 'audio'}.m4a`);
+  }, [doc.audioBlob, doc.audioFileName, doc.title]);
+
+  const onSaveBass = useCallback(() => {
+    if (!doc.stems) return;
+    downloadBlob(doc.stems.bass, `${fileSafe(doc.title) || 'song'}-bass.wav`);
+  }, [doc.stems, doc.title]);
+
+  const onExportTab = useCallback(() => {
+    const bytes = exportGuitarPro();
+    if (!bytes) {
+      setSaveError('탭 저장 실패: 악보가 아직 로드되지 않았습니다.');
+      return;
+    }
+    downloadBlob(
+      new Blob([bytes.slice()], { type: 'application/octet-stream' }),
+      `${fileSafe(doc.title) || 'tab'}.gp`,
+    );
+  }, [exportGuitarPro, doc.title]);
 
   const onImportBass = useCallback(
     async (file: File) => {
@@ -671,14 +823,7 @@ export default function App() {
 
   const onExportSong = useCallback(async () => {
     try {
-      const file = await encodeSongFile(doc);
-      const url = URL.createObjectURL(file);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = songFileName(doc);
-      a.click();
-      // Revoke late: revoking immediately can cancel the download in some browsers.
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      downloadBlob(await encodeSongFile(doc), songFileName(doc));
     } catch (e) {
       setSaveError(`내보내기 실패: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -725,6 +870,16 @@ export default function App() {
 
   /* --------------------------------------------------------------- render */
 
+  // Separation and transcription already report their own progress; the pipeline shows the
+  // same numbers rather than inventing a second set.
+  const pipelineView: PipelineState | null =
+    pipeline && !pipeline.error && pipeline.step === 'separate'
+      ? { ...pipeline, progress: sepProgress.progress, message: sepProgress.message }
+      : pipeline && !pipeline.error && pipeline.step === 'transcribe'
+        ? { ...pipeline, progress: tabProgress?.progress ?? 0, message: tabProgress?.message }
+        : pipeline;
+  const pipelineBusy = !!pipeline && pipeline.step !== 'done' && !pipeline.error;
+
   return (
     <div className="app">
       <header className="topbar">
@@ -764,6 +919,13 @@ export default function App() {
           >
             원본 음원
           </FilePick>
+          <button
+            className="btn"
+            onClick={onExportTab}
+            title="Guitar Pro 파일로 저장 — Guitar Pro, TuxGuitar, MuseScore에서 열립니다"
+          >
+            탭 저장 (.gp)
+          </button>
           <button className={`btn toggle ${tabOnly ? 'on' : ''}`} onClick={() => setTabOnly((v) => !v)}>
             탭만
           </button>
@@ -810,6 +972,51 @@ export default function App() {
         </main>
 
         <aside className="sidebar">
+          <YouTubePanel
+            sidecar={sidecar}
+            pipeline={pipelineView}
+            busy={pipelineBusy || sepBusy || tabBusy}
+            auto={autoPipeline}
+            onAuto={setAutoPipeline}
+            onImport={onImportYouTube}
+            onRecheck={recheckSidecar}
+            audioFileName={hasAudio ? (doc.audioFileName ?? '원본 음원') : null}
+            sourceUrl={doc.sourceUrl ?? null}
+            onSaveAudio={onSaveAudio}
+          />
+
+          <StemPanel
+            hasAudio={hasAudio}
+            stems={doc.stems}
+            capability={capability}
+            diagnosis={isolationDiag}
+            busy={sepBusy}
+            progress={sepProgress}
+            error={sepError}
+            onSeparate={onSeparate}
+            tabBusy={tabBusy}
+            tabProgress={tabProgress}
+            tabResult={tabResult}
+            onTranscribe={onTranscribe}
+            tabBpm={tabBpm}
+            onTabBpm={setTabBpm}
+            onExportDiagnostics={onExportTabDiagnostics}
+            onRescaleTempo={onRescaleTempo}
+            sidecar={sidecar}
+            sidecarSettings={sidecarSettings}
+            useSidecar={useSidecar}
+            onToggleSidecar={() => setUseSidecar((v) => !v)}
+            onSidecarSettings={(patch) => setSidecarSettings((s) => ({ ...s, ...patch }))}
+            onImportBass={onImportBass}
+            onSaveBass={onSaveBass}
+            onExportTab={onExportTab}
+            onDelete={() => {
+              patchDoc({ stems: undefined });
+              setSepProgress(IDLE_PROGRESS);
+              setSepError(null);
+            }}
+          />
+
           <SyncPanel
             anchors={doc.syncAnchors}
             currentTick={state.position.currentTick}
@@ -839,36 +1046,6 @@ export default function App() {
             onSeekToAnchor={(a) => {
               if (anchorMode) deckRef.current!.seek(a.audioMs);
               else if (apiRef.current) apiRef.current.tickPosition = a.synthTick;
-            }}
-          />
-
-          <StemPanel
-            hasAudio={hasAudio}
-            stems={doc.stems}
-            capability={capability}
-            diagnosis={isolationDiag}
-            busy={sepBusy}
-            progress={sepProgress}
-            error={sepError}
-            onSeparate={onSeparate}
-            tabBusy={tabBusy}
-            tabProgress={tabProgress}
-            tabResult={tabResult}
-            onTranscribe={onTranscribe}
-            tabBpm={tabBpm}
-            onTabBpm={setTabBpm}
-            onExportDiagnostics={onExportTabDiagnostics}
-            onRescaleTempo={onRescaleTempo}
-            sidecar={sidecar}
-            sidecarSettings={sidecarSettings}
-            useSidecar={useSidecar}
-            onToggleSidecar={() => setUseSidecar((v) => !v)}
-            onSidecarSettings={(patch) => setSidecarSettings((s) => ({ ...s, ...patch }))}
-            onImportBass={onImportBass}
-            onDelete={() => {
-              patchDoc({ stems: undefined });
-              setSepProgress(IDLE_PROGRESS);
-              setSepError(null);
             }}
           />
 
@@ -967,6 +1144,17 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+/** Hand a blob to the browser as a file download. */
+function downloadBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  // Revoke late: revoking immediately can cancel the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 function fmtBytes(n: number): string {

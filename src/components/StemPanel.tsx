@@ -31,6 +31,10 @@ export interface StemPanelProps {
   error: string | null;
   onSeparate: () => void;
   onImportBass: (file: File) => void;
+  /** Download the isolated bass as a WAV file. */
+  onSaveBass: () => void;
+  /** Download the score on screen as a Guitar Pro file. */
+  onExportTab: () => void;
   onDelete: () => void;
 
   /** Automatic transcription of the isolated bass stem. */
@@ -65,7 +69,10 @@ export function StemPanel(props: StemPanelProps) {
       </header>
 
       {!props.hasAudio ? (
-        <p className="hint">원본 음원을 먼저 불러오세요. 거기서 베이스를 뽑아냅니다.</p>
+        <p className="hint">
+          원본 음원을 먼저 불러오세요 — 위에 YouTube 링크를 넣거나 상단의 "원본 음원"으로 파일을
+          고르면 됩니다. 거기서 베이스를 뽑아냅니다.
+        </p>
       ) : stems ? (
         <>
           <p className="hint">
@@ -81,6 +88,9 @@ export function StemPanel(props: StemPanelProps) {
               <dd>{fmtMb(stems.bass.size + stems.minusBass.size)}</dd>
             </div>
           </dl>
+          <button className="btn tiny" onClick={props.onSaveBass}>
+            베이스 WAV 저장
+          </button>
           {props.tabBusy ? (
             <div className="separating">
               <div className="phase-line">
@@ -191,9 +201,14 @@ export function StemPanel(props: StemPanelProps) {
                       </button>
                     </div>
 
-                    <button className="btn tiny" onClick={props.onExportDiagnostics}>
-                      채보 진단 JSON 저장
-                    </button>
+                    <div className="row gap">
+                      <button className="btn tiny" onClick={props.onExportTab}>
+                        탭 파일 저장 (.gp)
+                      </button>
+                      <button className="btn tiny" onClick={props.onExportDiagnostics}>
+                        채보 진단 JSON 저장
+                      </button>
+                    </div>
                     <p className="hint tiny dim">
                       들린 음 전부가 시각·확신도와 함께 저장됩니다. 새로고침하면 사라지니 지금
                       받아두세요.

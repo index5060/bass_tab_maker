@@ -1,4 +1,4 @@
-# 로컬 사이드카 — 분리 + AI 채보
+# 로컬 사이드카 — YouTube 다운로드 + 분리 + AI 채보
 
 브라우저 분리는 **고정된 양자화 모델 하나**만 돌립니다. 모델을 고를 수도, shifts나 overlap을
 건드릴 수도, GPU를 쓸 수도 없습니다. 그런데 베이스 스템이 깨끗하게 나오느냐 뚝뚝 끊기느냐를
@@ -11,15 +11,17 @@
 
 ---
 
-## 두 가지 일을 합니다
+## 세 가지 일을 합니다
 
 | | 하는 일 | 필요한 패키지 |
 |---|---|---|
+| **YouTube 다운로드** | 링크에서 음원 파일을 받음 | `yt-dlp[default]` |
 | **분리** | 원본에서 베이스 스템을 뽑음 | `demucs` |
 | **AI 채보** | 그 스템에서 음표를 뽑음 | `basic-pitch` |
 
-둘은 독립입니다. 하나만 깔아도 그 기능만 켜지고, 없는 쪽은 앱이 조용히 브라우저
-경로(브라우저 분리 / YIN 채보)로 돌아갑니다.
+셋은 독립입니다. 하나만 깔아도 그 기능만 켜지고, 없는 쪽은 앱이 조용히 브라우저
+경로(브라우저 분리 / YIN 채보)로 돌아갑니다. YouTube 다운로드만은 브라우저 대체 경로가
+없습니다 — 브라우저는 YouTube 음원을 직접 읽을 수 없어서, yt-dlp가 없으면 그 기능만 꺼집니다.
 
 ---
 
@@ -30,14 +32,19 @@ Python 3.9 이상. 서버 자체는 표준 라이브러리만 씁니다.
 **Windows:**
 
 ```
-py -m pip install demucs basic-pitch
+py -m pip install demucs basic-pitch "yt-dlp[default]"
 ```
 
 **macOS / Linux:**
 
 ```
-python3 -m pip install demucs basic-pitch
+python3 -m pip install demucs basic-pitch "yt-dlp[default]"
 ```
+
+`yt-dlp[default]`의 `[default]`가 중요합니다. 그게 YouTube 주소 해독기(`yt-dlp-ejs`)를 같이
+깔아주고, 없으면 대부분의 영상이 서명 오류로 실패합니다. 해독기는 JavaScript 런타임 위에서
+도는데, `npm run sidecar`가 지금 쓰는 Node 경로를 넘겨주므로 Node 22 이상이면 따로 깔
+것이 없습니다(그보다 낮으면 [deno](https://deno.land) 설치).
 
 Python을 여러 개 깔아두셨다면 **사이드카가 실제로 고른 그 인터프리터**에 깔아야 합니다.
 `npm run sidecar`가 첫 줄에 어느 걸 골랐는지 찍어주니 그대로 쓰세요:
@@ -94,6 +101,7 @@ python3 sidecar/server.py     # macOS / Linux
 ```
 Bass Practice 사이드카  http://127.0.0.1:8765
   demucs 4.0.1 · basic-pitch 0.4.0 · 장치 cuda (NVIDIA GeForce RTX 4070)
+  yt-dlp 2026.08.19 · YouTube 링크 가져오기 사용 가능
   종료하려면 Ctrl+C
 ```
 
@@ -126,15 +134,22 @@ CORS뿐 아니라 **CORP까지** 요구받습니다. 둘 중 하나만 빠져도
 
 | | |
 |---|---|
-| `GET /health` | demucs / basic-pitch 버전, 장치, 사용 가능한 모델 |
+| `GET /health` | demucs / basic-pitch / yt-dlp 버전, yt-dlp-ejs·ffmpeg 유무, 장치, 모델 |
+| `POST /youtube` | 본문 `{"url": "..."}` (JSON). YouTube 호스트만 받음. 작업 id 반환 |
 | `POST /separate?model=&shifts=&overlap=&ext=` | 본문에 오디오 바이트. 작업 id 반환 |
 | `POST /transcribe?ext=` | 본문에 **베이스 스템** 바이트. 작업 id 반환 |
-| `GET /jobs/{id}` | 상태와 진행률 |
+| `GET /jobs/{id}` | 상태와 진행률. YouTube 작업은 끝나면 `meta`(제목·채널·길이·확장자) |
+| `GET /jobs/{id}/audio` | YouTube 작업이 받은 음원 파일 |
 | `GET /jobs/{id}/bass` · `/no_bass` | 결과 WAV |
 | `GET /jobs/{id}/notes` | 채보 결과 JSON (`midi`, `startMs`, `endMs`, `confidence`) |
 | `DELETE /jobs/{id}` | 임시 파일 정리 |
 
 작업은 한 시간 뒤 자동으로 정리되고, 앱은 결과를 받는 즉시 삭제를 호출합니다.
+
+**작업을 시작하거나 지우는 요청(POST/DELETE)은 localhost 출처에서만 받습니다.** 서버가
+`127.0.0.1`에만 열려 있어도 브라우저에 열린 다른 사이트는 localhost로 요청을 보낼 수
+있습니다. 브라우저는 그런 요청에 항상 `Origin`을 붙이므로, 출처가 localhost가 아니면 403입니다.
+`Origin`이 없는 요청(curl, 테스트)은 브라우저가 아니므로 그대로 받습니다.
 
 ## AI 채보에 대해
 
@@ -151,12 +166,15 @@ CORS뿐 아니라 **CORP까지** 요구받습니다. 둘 중 하나만 빠져도
 
 ## 테스트
 
-진짜 demucs나 basic-pitch 없이 프로토콜만 검증할 수 있습니다. `_stubdemucs/`에 둘 다
-스텁이 있습니다 — demucs 스텁은 같은 명령줄을 받아 같은 모양의 진행률을 뱉고 실제 위치에
-파일을 쓰고, basic-pitch 스텁은 A1 4분음표 4개를 냅니다.
+진짜 yt-dlp나 demucs, basic-pitch 없이 프로토콜만 검증할 수 있습니다. `_stubdemucs/`에 셋 다
+스텁이 있습니다 — yt-dlp 스텁은 같은 Python API로 진행률 훅과 필터를 부르고 A1 음을 WAV로
+"받아오고", demucs 스텁은 같은 명령줄을 받아 같은 모양의 진행률을 뱉고 실제 위치에 파일을
+쓰고, basic-pitch 스텁은 0.5초마다 A1을 냅니다. yt-dlp 스텁은 영상 id `Unavailable`(삭제된
+영상)과 `LiveStream0`(라이브)으로 실패 경로도 흉내 냅니다.
 
 ```
 npm run test:sidecar
+npm run test:youtube   # 링크 → 음원 → 스템 → 탭 전 구간
 ```
 
 확인하는 것:

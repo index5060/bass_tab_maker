@@ -20,6 +20,7 @@
     "test:dup": "node duplicatecheck.mjs",
     "test:autotab": "node autotabcheck.mjs",
     "test:sidecar": "node sidecarcheck.mjs",
+    "test:youtube": "node youtubecheck.mjs",
     "sidecar": "node sidecar/run.mjs",
     "replay": "node replay.mjs"
   },

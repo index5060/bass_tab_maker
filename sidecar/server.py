@@ -14,10 +14,12 @@ A sidecar keeps the web app exactly as it is and puts the heavy, configurable wo
 small local process next to it. The page talks to it over HTTP on localhost; if it is not
 running, the app silently falls back to browser separation.
 
-Dependencies: the Python standard library, plus demucs itself. Nothing else, so the only
-thing to install is the thing actually doing the work.
+Dependencies: the Python standard library, plus whichever of these you want switched on.
+Each one is optional and independent; the app falls back for any that are missing.
 
-    pip install demucs
+    pip install demucs                  # separation
+    pip install basic-pitch             # AI transcription
+    pip install -U "yt-dlp[default]"    # YouTube link -> audio
     python sidecar/server.py
 
 Everything stays on this machine. The server binds to 127.0.0.1 and refuses to listen on
@@ -62,6 +64,31 @@ JOB_RETENTION_SECONDS = 60 * 60
 
 KNOWN_MODELS = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "mdx_extra", "mdx_extra_q"]
 
+# The only hosts /youtube will hand to yt-dlp. yt-dlp has a generic extractor that will fetch
+# almost any URL it is given, and this process is reachable from every page the browser has
+# open — so without an allowlist it would be a local fetch-anything proxy.
+YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+    "www.youtube-nocookie.com",
+}
+# Long enough for any song, short enough to refuse an hour-long mix or a stream by accident.
+MAX_YOUTUBE_SECONDS = 30 * 60
+
+AUDIO_CONTENT_TYPES = {
+    "m4a": "audio/mp4",
+    "mp4": "audio/mp4",
+    "webm": "audio/webm",
+    "opus": "audio/ogg",
+    "ogg": "audio/ogg",
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "flac": "audio/flac",
+}
+
 
 # --------------------------------------------------------------------------- jobs
 
@@ -80,6 +107,9 @@ class Job:
     log_tail: list[str] = field(default_factory=list)
     # Transcription jobs put their result here instead of writing stem files.
     notes: list | None = None
+    # YouTube jobs: the downloaded audio file and what the video says about itself.
+    audio_path: Path | None = None
+    meta: dict | None = None
 
 
 JOBS: dict[str, Job] = {}
@@ -123,6 +153,41 @@ def basic_pitch_version() -> str | None:
         return getattr(basic_pitch, "__version__", "unknown")
     except Exception:
         return None
+
+
+def ytdlp_version() -> str | None:
+    """yt-dlp, which turns a YouTube link into an audio file. Optional like everything else."""
+    try:
+        from yt_dlp.version import __version__
+
+        return __version__
+    except Exception:
+        return None
+
+
+def ytdlp_has_ejs() -> bool:
+    """
+    Whether yt-dlp's YouTube challenge solver is installed.
+
+    YouTube now scrambles its stream URLs with JavaScript, and yt-dlp only unscrambles them
+    with the separate yt-dlp-ejs package plus a JS runtime. A bare `pip install yt-dlp` lacks
+    the package and fails on most videos with a signature error that never says what to
+    install. Reporting it up front turns that into one line in the UI.
+    """
+    try:
+        import yt_dlp_ejs  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
+def ffmpeg_available() -> bool:
+    """
+    demucs reads anything but WAV through ffmpeg. Without it the app converts to WAV in the
+    browser before sending, which is why the browser needs to know.
+    """
+    return shutil.which("ffmpeg") is not None
 
 
 def torch_device() -> str:
@@ -265,6 +330,173 @@ def run_transcription(job: Job, audio_path: Path) -> None:
     job.message = "완료"
 
 
+# --------------------------------------------------------------------- youtube
+
+
+def canonical_youtube_url(raw: str) -> str | None:
+    """
+    The one URL shape /youtube accepts, or None.
+
+    Anything not on a YouTube host is refused outright (see YOUTUBE_HOSTS). Of what is left,
+    only the video id is kept: a `list=` parameter would otherwise pull a whole playlist, and
+    `t=`, `si=` and friends mean nothing to a download.
+    """
+    try:
+        parsed = urlparse(raw.strip())
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https") or (parsed.hostname or "") not in YOUTUBE_HOSTS:
+        return None
+
+    host = parsed.hostname
+    parts = [p for p in parsed.path.split("/") if p]
+    video_id = None
+    if host == "youtu.be":
+        video_id = parts[0] if parts else None
+    elif parts[:1] == ["watch"]:
+        video_id = (parse_qs(parsed.query).get("v") or [None])[0]
+    elif len(parts) >= 2 and parts[0] in ("shorts", "embed", "live", "v"):
+        video_id = parts[1]
+
+    if not video_id or not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        return None
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+class _YtdlpLog:
+    """Collects yt-dlp's warnings so a failure can say why, instead of just 'it failed'."""
+
+    def __init__(self, job: Job) -> None:
+        self.job = job
+
+    def _keep(self, msg: str) -> None:
+        self.job.log_tail.append(msg)
+        del self.job.log_tail[:-20]
+
+    def debug(self, msg: str) -> None:
+        pass
+
+    def info(self, msg: str) -> None:
+        pass
+
+    def warning(self, msg: str) -> None:
+        self._keep(msg)
+
+    def error(self, msg: str) -> None:
+        self._keep(msg)
+
+
+def run_youtube_download(job: Job, url: str) -> None:
+    """
+    Link in, audio file out, via yt-dlp.
+
+    Asks for the m4a (AAC) audio stream when there is one: every browser plays and decodes it,
+    so the file can go straight into <audio> and decodeAudioData, and it is a few MB rather
+    than the ~40MB a WAV of the same song would cost in IndexedDB. No re-encode either way.
+    """
+    job.state = "running"
+    job.message = "YouTube 정보 읽는 중"
+
+    try:
+        import yt_dlp
+    except Exception:
+        job.state = "error"
+        job.error = "yt-dlp가 설치되어 있지 않습니다. 'pip install -U \"yt-dlp[default]\"'."
+        return
+
+    def on_progress(d: dict) -> None:
+        if d.get("status") == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            done = d.get("downloaded_bytes") or 0
+            if total:
+                job.progress = min(0.95, done / total)
+            job.message = f"다운로드 중 {done / 1024 / 1024:.1f}MB"
+        elif d.get("status") == "finished":
+            job.progress = 0.97
+            job.message = "마무리 중"
+
+    # A rejected video comes back from extract_info as an ordinary info dict with nothing
+    # downloaded, so the reason has to be kept here to be reported at all.
+    rejected: list[str] = []
+
+    def refuse_long_or_live(info: dict, *, incomplete: bool = False) -> str | None:
+        reason = None
+        if info.get("is_live"):
+            reason = "라이브 방송은 받을 수 없습니다."
+        duration = info.get("duration")
+        if duration and duration > MAX_YOUTUBE_SECONDS:
+            reason = f"{int(duration // 60)}분짜리 영상입니다. {MAX_YOUTUBE_SECONDS // 60}분 이하만 받습니다."
+        if reason:
+            rejected.append(reason)
+        return reason
+
+    # yt-dlp needs a JS runtime to solve YouTube's stream challenges and only enables deno by
+    # default. Node is the one runtime every user of this app is guaranteed to have, so offer
+    # it too — the launcher passes the exact binary it is running on.
+    js_runtimes: dict = {"deno": {}, "node": {}}
+    node_path = os.environ.get("BASS_SIDECAR_NODE")
+    if node_path:
+        js_runtimes["node"] = {"path": node_path}
+
+    options = {
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "outtmpl": str(job.workdir / "audio.%(ext)s"),
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": False,
+        "noprogress": True,
+        "logger": _YtdlpLog(job),
+        "progress_hooks": [on_progress],
+        "match_filter": refuse_long_or_live,
+        "max_filesize": MAX_UPLOAD_BYTES,
+        "js_runtimes": js_runtimes,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception as exc:  # noqa: BLE001
+        job.state = "error"
+        # yt-dlp prefixes its own errors with "ERROR: " and colour codes, and appends a "please
+        # report this issue" footer; none of that helps here.
+        detail = re.sub(r"\x1b\[[0-9;]*m", "", str(exc)).replace("ERROR: ", "")
+        detail = detail.split("; please report")[0].strip()
+        job.error = f"YouTube에서 받지 못했습니다: {detail}"
+        job.message = "\n".join(job.log_tail[-3:])
+        return
+
+    if rejected or info is None:
+        job.state = "error"
+        job.error = rejected[-1] if rejected else "영상 정보를 읽지 못했습니다."
+        return
+
+    downloads = info.get("requested_downloads") or []
+    produced = [Path(d["filepath"]) for d in downloads if d.get("filepath")]
+    produced += sorted(job.workdir.glob("audio.*"))
+    produced = [p for p in produced if p.exists() and p.suffix not in (".part", ".ytdl")]
+    if not produced:
+        job.state = "error"
+        job.error = "yt-dlp가 오디오 파일을 만들지 않았습니다."
+        job.message = "\n".join(job.log_tail[-3:])
+        return
+
+    job.audio_path = produced[0]
+    ext = job.audio_path.suffix.lstrip(".").lower()
+    job.meta = {
+        "title": info.get("track") or info.get("title") or "YouTube",
+        "artist": info.get("artist") or info.get("uploader") or info.get("channel") or "",
+        "durationSec": info.get("duration"),
+        "videoId": info.get("id"),
+        "url": info.get("webpage_url") or url,
+        "ext": ext,
+        "contentType": AUDIO_CONTENT_TYPES.get(ext, "application/octet-stream"),
+        "bytes": job.audio_path.stat().st_size,
+    }
+    job.progress = 1.0
+    job.state = "done"
+    job.message = "완료"
+
+
 # ------------------------------------------------------------------- http layer
 
 
@@ -299,14 +531,32 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _wav(self, path: Path) -> None:
+    def _file(self, path: Path, content_type: str = "audio/wav") -> None:
         data = path.read_bytes()
         self.send_response(200)
         self._cors()
-        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _origin_allowed(self) -> bool:
+        """
+        Only the app, served from this machine, may start work here.
+
+        Binding to 127.0.0.1 keeps the network out, but not other web pages: any site open in
+        the browser can POST to localhost. Browsers always attach Origin to such a request, so
+        refusing foreign origins stops a random page from making this process download videos
+        or spin the GPU. No Origin at all means a non-browser caller (curl, tests) — allowed.
+        """
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return True
+        try:
+            host = urlparse(origin).hostname or ""
+        except ValueError:
+            return False
+        return host in ("localhost", "127.0.0.1", "::1")
 
     # -- routes -----------------------------------------------------------
 
@@ -329,11 +579,15 @@ class Handler(BaseHTTPRequestHandler):
         ready = version is not None
         slow = ready and device.startswith("cpu")
 
+        ytdlp = ytdlp_version()
         rows = "".join(
             f"<tr><th>{k}</th><td>{v}</td></tr>"
             for k, v in [
                 ("상태", "준비됨" if ready else "demucs 없음"),
-                ("demucs", version or "설치되지 않음"),
+                ("demucs (분리)", version or "설치되지 않음"),
+                ("basic-pitch (AI 채보)", basic_pitch_version() or "설치되지 않음"),
+                ("yt-dlp (YouTube)", ytdlp or "설치되지 않음"),
+                ("ffmpeg", "있음" if ffmpeg_available() else "없음"),
                 ("장치", device),
                 ("포트", str(PORT)),
             ]
@@ -409,6 +663,9 @@ class Handler(BaseHTTPRequestHandler):
                     "demucs": version,
                     "demucsInstalled": version is not None,
                     "basicPitch": basic_pitch_version(),
+                    "ytdlp": ytdlp_version(),
+                    "ytdlpEjs": ytdlp_has_ejs(),
+                    "ffmpeg": ffmpeg_available(),
                     "device": torch_device(),
                     "models": KNOWN_MODELS,
                 }
@@ -431,8 +688,16 @@ class Handler(BaseHTTPRequestHandler):
                         "message": job.message,
                         "error": job.error,
                         "hasNoBass": job.no_bass_path is not None,
+                        "meta": job.meta,
                     }
                 )
+                return
+
+            if len(parts) == 3 and parts[2] == "audio":
+                if job.state != "done" or job.audio_path is None:
+                    self._json({"error": "아직 준비되지 않았습니다."}, 409)
+                    return
+                self._file(job.audio_path, (job.meta or {}).get("contentType", "application/octet-stream"))
                 return
 
             if len(parts) == 3 and parts[2] == "notes":
@@ -447,16 +712,53 @@ class Handler(BaseHTTPRequestHandler):
                 if job.state != "done" or path is None:
                     self._json({"error": "아직 준비되지 않았습니다."}, 409)
                     return
-                self._wav(path)
+                self._file(path)
                 return
 
         self._json({"error": "not found"}, 404)
 
+    def _start_youtube(self) -> None:
+        if ytdlp_version() is None:
+            self._json(
+                {"error": "yt-dlp가 설치되어 있지 않습니다. 'pip install -U \"yt-dlp[default]\"'."},
+                503,
+            )
+            return
+
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > 8192:
+            self._json({"error": "요청 본문이 없거나 너무 깁니다."}, 400)
+            return
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._json({"error": "JSON 본문이 올바르지 않습니다."}, 400)
+            return
+
+        url = canonical_youtube_url(str(body.get("url", ""))) if isinstance(body, dict) else None
+        if url is None:
+            self._json({"error": "YouTube 영상 링크가 아닙니다."}, 400)
+            return
+
+        cleanup_old_jobs()
+        job = Job(id=uuid.uuid4().hex)
+        job.workdir = Path(tempfile.mkdtemp(prefix="bassprac-yt-"))
+        with JOBS_LOCK:
+            JOBS[job.id] = job
+        threading.Thread(target=run_youtube_download, args=(job, url), daemon=True).start()
+        self._json({"id": job.id, "url": url})
+
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         route = [p for p in parsed.path.split("/") if p]
-        if route not in (["separate"], ["transcribe"]):
+        if route not in (["separate"], ["transcribe"], ["youtube"]):
             self._json({"error": "not found"}, 404)
+            return
+        if not self._origin_allowed():
+            self._json({"error": "사이드카는 localhost 주소로 연 앱에서만 쓸 수 있습니다."}, 403)
+            return
+        if route == ["youtube"]:
+            self._start_youtube()
             return
         transcribing = route == ["transcribe"]
 
@@ -521,6 +823,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         parts = [p for p in urlparse(self.path).path.split("/") if p]
+        if not self._origin_allowed():
+            self._json({"error": "사이드카는 localhost 주소로 연 앱에서만 쓸 수 있습니다."}, 403)
+            return
         if len(parts) == 2 and parts[0] == "jobs":
             with JOBS_LOCK:
                 job = JOBS.pop(parts[1], None)
@@ -543,6 +848,13 @@ def main() -> None:
         print(f"  demucs {version} · {pitch_note} · 장치 {torch_device()}")
     else:
         print("  demucs가 아직 없습니다 — 'pip install demucs' 후 다시 실행하세요.")
+    ytdlp = ytdlp_version()
+    if ytdlp and ytdlp_has_ejs():
+        print(f"  yt-dlp {ytdlp} · YouTube 링크 가져오기 사용 가능")
+    elif ytdlp:
+        print(f"  yt-dlp {ytdlp} · yt-dlp-ejs 없음 — YouTube가 실패하면 'pip install -U \"yt-dlp[default]\"'")
+    else:
+        print("  yt-dlp 없음 (YouTube 링크 가져오기 꺼짐) — 'pip install -U \"yt-dlp[default]\"'")
     print("  종료하려면 Ctrl+C")
 
     server = ThreadingHTTPServer((HOST, PORT), Handler)

@@ -3,3 +3,4 @@ dist
 *.png
 public/font
 public/soundfont
+__pycache__/
