@@ -1,0 +1,47 @@
+{
+  "name": "bass-practice",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:cold": "node coldstart.mjs",
+    "test:smoke": "node smoke.mjs",
+    "start": "vite build && vite preview --port 5173",
+    "test:cursor": "node cursorcheck.mjs",
+    "test:stems": "node stemcheck.mjs",
+    "test:degrade": "node degradecheck.mjs",
+    "test:diag": "node diagcheck.mjs",
+    "test:wiring": "node wiringcheck.mjs",
+    "test:dup": "node duplicatecheck.mjs",
+    "test:autotab": "node autotabcheck.mjs",
+    "test:sidecar": "node sidecarcheck.mjs",
+    "sidecar": "node sidecar/run.mjs",
+    "replay": "node replay.mjs"
+  },
+  "dependencies": {
+    "@coderline/alphatab": "^1.8.4",
+    "@coderline/alphatab-vite": "^1.8.4",
+    "demucs-web": "^1.0.2",
+    "idb": "^8.0.3",
+    "onnxruntime-web": "^1.27.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "oxlint": "^1.75.0",
+    "playwright": "^1.62.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.11"
+  },
+  "description": "\ubca0\uc774\uc2a4 \uc5f0\uc2b5\uc6a9 \ub85c\uceec \uc6f9\uc571 \u2014 \ud0ed \ud45c\uc2dc / \uc18d\ub3c4 \uc870\uc808 / \uc6d0\ubcf8\u2194\uc2e0\ub514 \uc804\ud658"
+}
