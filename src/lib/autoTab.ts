@@ -17,6 +17,7 @@ import {
   suggestRmsGate,
   medianSmoothFrames,
   mergeNearbyNotes,
+  resolveOverlaps,
   repairOctaveJumps,
   searchTempo,
   gridPhase,
@@ -202,13 +203,16 @@ export interface NotesToTabInput {
 export function notesToAutoTab(input: NotesToTabInput): AutoTabResult {
   // Keep the instrument's range honest for notes that arrived from outside the local
   // detector — the segmenter already filtered its own.
+  // 28..67 is E1..G4 — the range of a standard-tuned (E A D G) 4-string bass.
   const inRange = input.notes.filter((n) => n.midi >= 28 && n.midi <= 67);
+  // basic-pitch hears chords; a bass line is one note at a time (see resolveOverlaps).
+  const monophonic = resolveOverlaps(inRange);
 
   // Merge only for the YIN path. There it heals level-gate dropouts inside one held note;
   // basic-pitch detects onsets explicitly, so a same-pitch note after a short gap is a real
   // repeated note — and repeated same-pitch eighths are the single most common bass figure.
   // Merging those glued a pumping eighth-note line into one long note.
-  const merged = (input.engine === 'yin' ? mergeNearbyNotes(inRange) : inRange).sort(
+  const merged = (input.engine === 'yin' ? mergeNearbyNotes(monophonic) : monophonic).sort(
     (a, b) => a.startMs - b.startMs,
   );
 

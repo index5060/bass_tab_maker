@@ -43,7 +43,7 @@ npm start            # vite build + vite preview 한 방에
 테스트:
 
 ```bash
-npm test             # 유닛 테스트 (싱크·스템 수학·음정·채보·링크, 175개)
+npm test             # 유닛 테스트 (싱크·스템 수학·음정·채보·링크, 184개)
 npm run test:cold    # 콜드스타트 회귀 테스트 (실제 브라우저)
 npm run test:cursor  # 재생 커서가 실제로 보이고 움직이는지
 npm run test:stems   # cross-origin isolation + 스템 UI 전제조건

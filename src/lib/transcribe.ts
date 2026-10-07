@@ -228,6 +228,69 @@ export function mergeNearbyNotes(notes: DetectedNote[], maxGapMs = 80): Detected
   return out;
 }
 
+/* -------------------------------------------------------- overlap repair */
+
+/** Intervals at which a plucked bass string rings its own overtones: 8va, 8va+5th, 15ma. */
+const OVERTONE_INTERVALS = new Set([12, 19, 24]);
+
+/**
+ * Make the note list one line, the way a bass part is played.
+ *
+ * basic-pitch is a polyphonic model, so it reports everything it hears at once — on a bass
+ * stem that is mostly the string's own overtones, plus whatever bled through separation.
+ * Downstream assumes one note at a time: quantisation used to shove each overlapping note to
+ * just after the one it overlapped, so a quarter-note line on A with its octave ringing came
+ * out as twice the notes, a stray fret-2-on-G after every pluck, and a rhythm that spilled
+ * into the next bar.
+ *
+ * Three cases, decided per pair:
+ *  - Same attack (onsets within `onsetWindowMs`): one pluck. An overtone loses to the note it
+ *    is an overtone of; otherwise the more confident reading wins.
+ *  - A weaker overtone wholly inside a longer note: the string ringing, not a pluck. Dropped.
+ *  - Anything else starting while the previous note still sounds: a new note. The previous
+ *    one is cut off there — which is also what the player's hand does.
+ *
+ * A no-op on the YIN path, which can only ever produce one note at a time.
+ */
+export function resolveOverlaps(notes: DetectedNote[], onsetWindowMs = 50): DetectedNote[] {
+  const sorted = [...notes].sort((a, b) => a.startMs - b.startMs || a.midi - b.midi);
+  const out: DetectedNote[] = [];
+
+  for (const note of sorted) {
+    const prev = out[out.length - 1];
+    if (!prev || note.startMs >= prev.endMs) {
+      out.push({ ...note });
+      continue;
+    }
+
+    const lower = note.midi < prev.midi ? note : prev;
+    const upper = lower === note ? prev : note;
+    const isOvertone = OVERTONE_INTERVALS.has(upper.midi - lower.midi);
+
+    if (note.startMs - prev.startMs <= onsetWindowMs) {
+      const winner = isOvertone
+        ? lower
+        : note.confidence > prev.confidence
+          ? note
+          : prev;
+      out[out.length - 1] = {
+        ...winner,
+        startMs: Math.min(prev.startMs, note.startMs),
+        endMs: Math.max(winner.endMs, Math.min(prev.endMs, note.endMs)),
+      };
+      continue;
+    }
+
+    const contained = note.endMs <= prev.endMs;
+    if (contained && isOvertone && upper === note && note.confidence <= prev.confidence) continue;
+
+    prev.endMs = note.startMs;
+    out.push({ ...note });
+  }
+
+  return out;
+}
+
 /* --------------------------------------------------------- octave repair */
 
 /**

@@ -4,6 +4,7 @@ import {
   segmentNotesDetailed,
   medianSmoothFrames,
   mergeNearbyNotes,
+  resolveOverlaps,
   fitGrid,
   searchTempo,
   findRepeatPeriodMs,
@@ -19,6 +20,7 @@ import {
   type DetectedNote,
 } from './transcribe';
 import { trackPitch, midiToHz, type PitchFrame } from './pitch';
+import { notesToAutoTab } from './autoTab';
 
 const SR = 11025;
 
@@ -224,6 +226,78 @@ describe('mergeNearbyNotes', () => {
   it('never merges across a pitch change', () => {
     const merged = mergeNearbyNotes([note(33, 0, 300), note(35, 320, 600)]);
     expect(merged).toHaveLength(2);
+  });
+});
+
+describe('resolveOverlaps', () => {
+  const note = (midi: number, startMs: number, endMs: number, confidence = 0.8): DetectedNote => ({
+    midi,
+    startMs,
+    endMs,
+    confidence,
+  });
+
+  it('keeps the fundamental when its octave is heard on the same attack', () => {
+    const out = resolveOverlaps([note(33, 0, 450, 0.8), note(45, 5, 300, 0.9)]);
+    expect(out).toEqual([note(33, 0, 450, 0.8)]);
+  });
+
+  it('treats an octave-and-fifth or two octaves the same way', () => {
+    expect(resolveOverlaps([note(33, 0, 450), note(52, 10, 300)]).map((n) => n.midi)).toEqual([33]);
+    expect(resolveOverlaps([note(33, 0, 450), note(57, 10, 300)]).map((n) => n.midi)).toEqual([33]);
+  });
+
+  it('keeps the more confident reading when two unrelated pitches share an attack', () => {
+    // A semitone apart is a detector disagreeing with itself, not an overtone.
+    const out = resolveOverlaps([note(33, 0, 450, 0.4), note(34, 10, 450, 0.9)]);
+    expect(out.map((n) => n.midi)).toEqual([34]);
+    expect(out[0].startMs).toBe(0);
+  });
+
+  it('drops a weaker overtone that rings inside a longer note', () => {
+    const out = resolveOverlaps([note(28, 0, 1000, 0.8), note(40, 300, 600, 0.5)]);
+    expect(out).toEqual([note(28, 0, 1000, 0.8)]);
+  });
+
+  it('cuts a ringing note off when the next note is plucked', () => {
+    // E then A, with E still sounding when A starts — legato, the most ordinary case.
+    const out = resolveOverlaps([note(28, 0, 600), note(33, 500, 1000)]);
+    expect(out).toEqual([note(28, 0, 500), note(33, 500, 1000)]);
+  });
+
+  it('keeps a real octave jump that is plucked, not rung', () => {
+    // Longer than the note it overlaps, so it is not contained: the player went up.
+    const out = resolveOverlaps([note(28, 0, 600), note(40, 400, 1200)]);
+    expect(out.map((n) => n.midi)).toEqual([28, 40]);
+    expect(out[0].endMs).toBe(400);
+  });
+
+  it('keeps repeated same-pitch notes apart', () => {
+    // basic-pitch reports each re-pluck; overlapping tails must not swallow them.
+    const out = resolveOverlaps([note(33, 0, 520), note(33, 500, 1020), note(33, 1000, 1500)]);
+    expect(out).toHaveLength(3);
+    expect(out.map((n) => n.startMs)).toEqual([0, 500, 1000]);
+  });
+
+  it('leaves non-overlapping input alone and does not mutate it', () => {
+    const input = [note(28, 0, 400), note(33, 500, 900)];
+    const copy = structuredClone(input);
+    expect(resolveOverlaps(input)).toEqual(copy);
+    expect(input).toEqual(copy);
+  });
+
+  it('writes one tab note per pluck when basic-pitch also hears the octave', () => {
+    // The case that used to double the notes: eight quarter notes on A1 at 120 BPM, each
+    // reported together with its octave. The tab must read 0.3 eight times and nothing else.
+    const notes: DetectedNote[] = [];
+    for (let i = 0; i < 8; i++) {
+      notes.push(note(33, i * 500, i * 500 + 450, 0.8));
+      notes.push(note(45, i * 500 + 5, i * 500 + 300, 0.4));
+    }
+    const result = notesToAutoTab({ notes, durationMs: 4000, title: 't', bpm: 120, engine: 'basic-pitch' });
+    expect(result.noteCount).toBe(8);
+    const body = result.alphaTex.split('\n').filter((l) => /^[:r\d]/.test(l));
+    expect(body.slice(0, 2)).toEqual([':4 0.3 0.3 0.3 0.3 |', '0.3 0.3 0.3 0.3 |']);
   });
 });
 
