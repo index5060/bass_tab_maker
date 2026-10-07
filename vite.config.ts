@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { alphaTab } from '@coderline/alphatab-vite';
 import { copyAlphaTabAssets } from './scripts/alphatabAssets.ts';
+import { copyBasicPitchModel } from './scripts/basicPitchModel.ts';
 
 const publicDir = path.resolve(import.meta.dirname, 'public');
 
@@ -17,6 +18,11 @@ const CROSS_ORIGIN_ISOLATION = {
 const assets = copyAlphaTabAssets(publicDir);
 if (assets.copied.length > 0) {
   console.log(`[alphaTab] 에셋 ${assets.copied.length}개 복사 완료 → public/`);
+}
+// Same timing, same reason: the AI transcriber's model has to be on disk before serving starts.
+const pitchModel = copyBasicPitchModel(publicDir);
+if (pitchModel.copied.length > 0) {
+  console.log(`[basic-pitch] 모델 파일 ${pitchModel.copied.length}개 복사 완료 → public/models/basic-pitch/`);
 }
 
 export default defineConfig({

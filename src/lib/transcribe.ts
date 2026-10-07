@@ -291,6 +291,140 @@ export function resolveOverlaps(notes: DetectedNote[], onsetWindowMs = 50): Dete
   return out;
 }
 
+/**
+ * Remove notes that are a lower note's overtones, judged against every note under them.
+ *
+ * resolveOverlaps only compares neighbours, and basic-pitch defeats that: it often splits the
+ * real note in two right where its overtone sets in, so the overtone straddles the split and
+ * is "inside" neither half. Measured on a plucked A1, the model returned
+ * `A1 1242-1416, E3 1312-1556, A2 1335-1498, A1 1416-1649` — one note, written as four.
+ *
+ * Here an overtone is a note that is mostly (≥ `minCoverage` of its length) sounding over
+ * notes 12, 19 or 24 semitones below it which the model was more sure of. Coverage is summed
+ * across all of those lower notes, which is exactly what survives the split.
+ */
+export function dropOvertones(notes: DetectedNote[], minCoverage = 0.5): DetectedNote[] {
+  return notes.filter((note) => {
+    const length = note.endMs - note.startMs;
+    if (length <= 0) return true;
+    let covered = 0;
+    let strongest = 0;
+    for (const other of notes) {
+      if (other === note || !OVERTONE_INTERVALS.has(note.midi - other.midi)) continue;
+      const overlap = Math.min(note.endMs, other.endMs) - Math.max(note.startMs, other.startMs);
+      if (overlap <= 0) continue;
+      covered += overlap;
+      strongest = Math.max(strongest, other.confidence);
+    }
+    return !(covered / length >= minCoverage && note.confidence <= strongest);
+  });
+}
+
+/* ------------------------------------------------------- attack envelope */
+
+export interface AttackEnvelope {
+  hopMs: number;
+  /** Rise in level (dB) arriving at each hop — large where a string is plucked. */
+  riseDb: Float32Array;
+}
+
+/**
+ * How sharply the level rises at each moment of the recording.
+ *
+ * The note models know pitch far better than they know *when*: basic-pitch put a plucked E1
+ * about 100ms before it was played, and it re-triggers same-pitch notes in the middle of one
+ * sustained pluck. The waveform itself has no such doubt — a plucked string is a jump in
+ * level — so the timing is taken from here. The window is 25ms so a 41Hz low E (24ms period)
+ * reads as a level, not as its own ripple.
+ */
+export function attackEnvelope(mono: Float32Array, sampleRate: number): AttackEnvelope {
+  const hop = Math.max(1, Math.round(sampleRate * 0.005));
+  const window = Math.max(hop, Math.round(sampleRate * 0.025));
+  const lagHops = 3; // compare against 15ms earlier
+  const frames = Math.max(0, Math.floor((mono.length - window) / hop) + 1);
+  const levelDb = new Float32Array(frames);
+  for (let f = 0; f < frames; f++) {
+    let sum = 0;
+    const base = f * hop;
+    for (let i = 0; i < window; i++) sum += mono[base + i] * mono[base + i];
+    levelDb[f] = 10 * Math.log10(sum / window + 1e-10);
+  }
+  // The rise peaks when the earlier window ends just before the pluck and the later one has
+  // taken 15ms of it in — so the pluck itself sits at the earlier window's END. Label it there.
+  const offset = Math.round(window / hop) - lagHops;
+  const riseDb = new Float32Array(frames + offset);
+  for (let f = lagHops; f < frames; f++) {
+    riseDb[f + offset] = Math.max(0, levelDb[f] - levelDb[f - lagHops]);
+  }
+  return { hopMs: (hop / sampleRate) * 1000, riseDb };
+}
+
+/** Strongest attack inside [fromMs, toMs], with where it is. */
+function strongestAttack(env: AttackEnvelope, fromMs: number, toMs: number): { db: number; atMs: number } {
+  const from = Math.max(0, Math.floor(fromMs / env.hopMs));
+  const to = Math.min(env.riseDb.length - 1, Math.ceil(toMs / env.hopMs));
+  let best = { db: 0, atMs: fromMs };
+  for (let i = from; i <= to; i++) {
+    if (env.riseDb[i] > best.db) best = { db: env.riseDb[i], atMs: i * env.hopMs };
+  }
+  return best;
+}
+
+export interface EnvelopeOptions {
+  /** A rise at least this big is a pluck. Decaying sustain never rises at all. */
+  attackDb?: number;
+  /** How far before / after a reported onset to look for its real attack. */
+  searchBeforeMs?: number;
+  searchAfterMs?: number;
+}
+
+/**
+ * Re-time notes against the recording's attacks, and join notes that were never re-plucked.
+ *
+ * - Same pitch, back to back, with no attack where the second begins: one note the model cut
+ *   in two. Joined. A real repeated note always has an attack — the string was plucked again —
+ *   so repeated eighths on the root stay separate.
+ * - Each onset moves to the strongest attack near it, never into the next note. Only when an
+ *   attack is actually there: legato (hammer-ons, slides) has none, and is left where it was.
+ */
+export function refineWithEnvelope(
+  notes: DetectedNote[],
+  env: AttackEnvelope,
+  options: EnvelopeOptions = {},
+): DetectedNote[] {
+  const attackDb = options.attackDb ?? 4;
+  const before = options.searchBeforeMs ?? 60;
+  const after = options.searchAfterMs ?? 200;
+
+  const joined: DetectedNote[] = [];
+  for (const note of [...notes].sort((a, b) => a.startMs - b.startMs)) {
+    const prev = joined[joined.length - 1];
+    if (
+      prev &&
+      prev.midi === note.midi &&
+      note.startMs - prev.endMs <= 30 &&
+      strongestAttack(env, note.startMs - 40, note.startMs + 60).db < attackDb
+    ) {
+      prev.endMs = Math.max(prev.endMs, note.endMs);
+      prev.confidence = Math.max(prev.confidence, note.confidence);
+      continue;
+    }
+    joined.push({ ...note });
+  }
+
+  return joined.map((note, i) => {
+    const previous = joined[i - 1];
+    const next = joined[i + 1];
+    const from = Math.max(note.startMs - before, previous ? previous.startMs + 30 : 0);
+    const to = Math.min(note.startMs + after, note.endMs - 30, next ? next.startMs - 20 : Infinity);
+    if (to <= from) return note;
+    const attack = strongestAttack(env, from, to);
+    if (attack.db < attackDb) return note;
+    const startMs = Math.round(attack.atMs);
+    return { ...note, startMs, endMs: Math.max(note.endMs, startMs + 30) };
+  });
+}
+
 /* --------------------------------------------------------- octave repair */
 
 /**
@@ -646,7 +780,10 @@ function phaseFor(
     re += Math.cos(angle);
     im += Math.sin(angle);
   }
-  const offsetMs = (((Math.atan2(im, re) / (2 * Math.PI)) * slot) % slot + slot) % slot;
+  // The NEAREST phase, in [-slot/2, slot/2). Wrapping into [0, slot) turned a grid sitting
+  // 2ms before the beat into one 123ms after it, which moved every note one sixteenth
+  // earlier against the recording — the tab still read fine and the cursor sync was off.
+  const offsetMs = (Math.atan2(im, re) / (2 * Math.PI)) * slot;
 
   let error = 0;
   for (const onset of onsets) {

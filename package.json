@@ -20,6 +20,7 @@
     "test:dup": "node duplicatecheck.mjs",
     "test:autotab": "node autotabcheck.mjs",
     "test:sidecar": "node sidecarcheck.mjs",
+    "test:start": "node startcheck.mjs",
     "test:youtube": "node youtubecheck.mjs",
     "sidecar": "node sidecar/run.mjs",
     "replay": "node replay.mjs"
@@ -27,6 +28,7 @@
   "dependencies": {
     "@coderline/alphatab": "^1.8.4",
     "@coderline/alphatab-vite": "^1.8.4",
+    "@spotify/basic-pitch": "^1.0.1",
     "demucs-web": "^1.0.2",
     "idb": "^8.0.3",
     "onnxruntime-web": "^1.27.0",
@@ -44,5 +46,5 @@
     "vite": "^8.2.0",
     "vitest": "^4.1.11"
   },
-  "description": "\ubca0\uc774\uc2a4 \uc5f0\uc2b5\uc6a9 \ub85c\uceec \uc6f9\uc571 \u2014 \ud0ed \ud45c\uc2dc / \uc18d\ub3c4 \uc870\uc808 / \uc6d0\ubcf8\u2194\uc2e0\ub514 \uc804\ud658"
+  "description": "베이스 연습용 로컬 웹앱 — 탭 표시 / 속도 조절 / 원본↔신디 전환"
 }

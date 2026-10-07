@@ -4,3 +4,4 @@ dist
 public/font
 public/soundfont
 __pycache__/
+public/models/basic-pitch

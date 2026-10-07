@@ -12,6 +12,7 @@
 
 import { buildMinusBass, type DemucsResult, type StemSet } from './stems';
 import { decodeToModelRate, packStems, type ProgressFn, type Separator } from './separator';
+import { fetchModelCached } from './modelCache';
 
 export interface DemucsSeparatorOptions {
   /**
@@ -68,7 +69,29 @@ export class DemucsSeparator implements Separator {
     if (!this._modelLoaded) {
       onProgress({ phase: 'loading-model', progress: 0, message: '모델 준비 중' });
       const url = this._options.modelUrl ?? demucs.CONSTANTS.DEFAULT_MODEL_URL;
-      await (this._processor as { loadModel(u: string): Promise<void> }).loadModel(url);
+      let bytes: ArrayBuffer;
+      try {
+        // Fetched here rather than by demucs-web, so it is kept in the browser after the first
+        // time instead of being downloaded again on every visit (see modelCache.ts).
+        const model = await fetchModelCached(url, (loaded, total) =>
+          onProgress({
+            phase: 'loading-model',
+            progress: total > 0 ? loaded / total : 0,
+            message: `모델 내려받는 중 ${fmtMb(loaded)} / ${fmtMb(total)} (처음 한 번만)`,
+          }),
+        );
+        bytes = model.bytes;
+        if (model.fromCache) onProgress({ phase: 'loading-model', progress: 1, message: '저장된 모델 사용' });
+      } catch (e) {
+        // On its own this surfaces as "Failed to fetch", which says nothing about what was
+        // being fetched or what to do about it.
+        const detail = e instanceof Error ? e.message : String(e);
+        throw new Error(
+          `분리 모델(약 172MB)을 내려받지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요. ` +
+            `한 번 받으면 브라우저에 저장돼 다음부터는 받지 않습니다. (원문: ${detail})`,
+        );
+      }
+      await (this._processor as { loadModel(b: ArrayBuffer): Promise<void> }).loadModel(bytes);
       this._modelLoaded = true;
     }
 

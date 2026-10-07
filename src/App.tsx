@@ -14,6 +14,7 @@ import { normalizeAnchors, isUsable, tickToAudioMs } from './lib/syncmap';
 import { BLANK_ALPHATEX, DEMO_ALPHATEX, DEMO_DOC_ID, blankAlphaTex, isBlankScore } from './lib/demoScore';
 import {
   transcribeBassStem,
+  transcribeBassStemAI,
   notesToAutoTab,
   type AutoTabProgress,
   type AutoTabResult,
@@ -55,10 +56,24 @@ import { Transport } from './components/Transport';
 import { SourceToggle } from './components/SourceToggle';
 import { SyncPanel } from './components/SyncPanel';
 import { StemPanel } from './components/StemPanel';
-import { YouTubePanel, type PipelineState, type PipelineStep } from './components/YouTubePanel';
+import {
+  StartPanel,
+  type PipelineSource,
+  type PipelineState,
+  type PipelineStep,
+} from './components/StartPanel';
 import './styles.css';
 
 const IDLE_PROGRESS: SeparationProgress = { phase: 'idle', progress: 0 };
+
+/** A recording arriving at the start of the pipeline, from a file or a link. */
+interface IncomingAudio {
+  file: File;
+  title: string;
+  artist: string;
+  /** Set only when it was fetched from a link. */
+  url?: string;
+}
 
 export default function App() {
   const [doc, setDoc] = useState<PracticeDoc>(() =>
@@ -534,6 +549,7 @@ export default function App() {
         // is the same family of tech behind tab sites' "AI draft" features. Everything after
         // "we have notes" is shared with the local path (notesToAutoTab).
         let result: AutoTabResult;
+        let fallbackReason: string | undefined;
         if (sidecar?.reachable && sidecar.basicPitch && useSidecar) {
           setTabProgress({ phase: 'analysing', progress: 0.3, message: 'basic-pitch (사이드카)' });
           const raw = await transcribeViaSidecar(stems.bass, undefined, (message) =>
@@ -548,7 +564,14 @@ export default function App() {
             engine: 'basic-pitch',
           });
         } else {
-          result = await transcribeBassStem(stems.bass, { title, bpm, onProgress: setTabProgress });
+          // The same model, in the page — this is what makes AI transcription work with
+          // nothing installed. If it cannot run here, the built-in detector still gives a tab.
+          try {
+            result = await transcribeBassStemAI(stems.bass, { title, bpm, onProgress: setTabProgress });
+          } catch (e) {
+            fallbackReason = e instanceof Error ? e.message : String(e);
+            result = await transcribeBassStem(stems.bass, { title, bpm, onProgress: setTabProgress });
+          }
         }
         await applyToSong(songId, { scoreKind: 'alphatex', scoreData: result.alphaTex });
         if (docRef.current.id === songId) {
@@ -559,6 +582,7 @@ export default function App() {
             engine: result.engine,
             confidence: result.meanConfidence,
             stats: result.stats,
+            fallbackReason,
           });
         }
         return result;
@@ -599,20 +623,24 @@ export default function App() {
   }, [doc.id, doc.stems, doc.title, doc.scoreData, doc.scoreKind, tabBpm, runTranscription]);
 
   /**
-   * YouTube link -> audio file -> bass stem -> tab, in one go.
+   * Recording -> bass stem -> tab, in one go, as a new song.
    *
    * Each step is the same code the individual buttons run; this only chains them and keeps
-   * the three-step progress on screen. With `autoPipeline` off it stops after the download,
-   * leaving separation and transcription to the buttons as before.
+   * the three-step progress on screen. `getAudio` is the first step — reading a picked file,
+   * or fetching a YouTube link — and is the only part that differs between the two. With
+   * `autoPipeline` off it stops after that, leaving the rest to the buttons as before.
    */
-  const onImportYouTube = useCallback(
-    async (url: string) => {
+  const startSongPipeline = useCallback(
+    async (
+      source: PipelineSource,
+      getAudio: (onProgress: (progress: number, message: string) => void) => Promise<IncomingAudio>,
+    ) => {
       const auto = autoPipeline;
       let step: PipelineStep = 'download';
-      setPipeline({ step, auto, progress: 0, message: '사이드카에 요청하는 중' });
+      setPipeline({ source, step, auto, progress: 0 });
       try {
-        const download = await downloadFromYouTube(url, (progress, message) =>
-          setPipeline({ step: 'download', auto, progress, message }),
+        const audio = await getAudio((progress, message) =>
+          setPipeline({ source, step: 'download', auto, progress, message }),
         );
 
         // An untouched "새 곡" is taken over rather than left behind as an empty row.
@@ -620,13 +648,13 @@ export default function App() {
         const reuse = open.id !== DEMO_DOC_ID && !open.audioBlob && isBlankScore(open.scoreData);
         const song = newPracticeDoc({
           id: reuse ? open.id : crypto.randomUUID(),
-          title: download.title,
-          artist: download.artist,
+          title: audio.title,
+          artist: audio.artist,
           scoreKind: 'alphatex',
-          scoreData: blankAlphaTex(8, 120, download.title),
-          audioBlob: download.file,
-          audioFileName: download.file.name,
-          sourceUrl: download.url,
+          scoreData: blankAlphaTex(8, 120, audio.title),
+          audioBlob: audio.file,
+          audioFileName: audio.file.name,
+          sourceUrl: audio.url,
         });
         // Saved now rather than through the debounced autosave, so the song is in the library
         // before the long steps start — results from them are applied to it by id.
@@ -642,24 +670,40 @@ export default function App() {
         setSepProgress(IDLE_PROGRESS);
 
         if (!auto) {
-          setPipeline({ step: 'done', auto, progress: 1 });
+          setPipeline({ source, step: 'done', auto, progress: 1 });
           return;
         }
 
         step = 'separate';
-        setPipeline({ step, auto, progress: 0 });
-        const stems = await runSeparation(song.id, download.file);
+        setPipeline({ source, step, auto, progress: 0 });
+        const stems = await runSeparation(song.id, audio.file);
 
         step = 'transcribe';
-        setPipeline({ step, auto, progress: 0 });
+        setPipeline({ source, step, auto, progress: 0 });
         await runTranscription(song.id, stems, song.title);
 
-        setPipeline({ step: 'done', auto, progress: 1 });
+        setPipeline({ source, step: 'done', auto, progress: 1 });
       } catch (e) {
-        setPipeline({ step, auto, progress: 0, error: e instanceof Error ? e.message : String(e) });
+        setPipeline({ source, step, auto, progress: 0, error: e instanceof Error ? e.message : String(e) });
       }
     },
     [autoPipeline, runSeparation, runTranscription],
+  );
+
+  const onImportFile = useCallback(
+    (file: File) =>
+      startSongPipeline('file', async () => ({
+        file,
+        title: file.name.replace(/\.[^.]+$/, '') || '새 곡',
+        artist: '',
+      })),
+    [startSongPipeline],
+  );
+
+  const onImportYouTube = useCallback(
+    (url: string) =>
+      startSongPipeline('youtube', (onProgress) => downloadFromYouTube(url, onProgress)),
+    [startSongPipeline],
   );
 
   /**
@@ -972,13 +1016,14 @@ export default function App() {
         </main>
 
         <aside className="sidebar">
-          <YouTubePanel
+          <StartPanel
             sidecar={sidecar}
             pipeline={pipelineView}
             busy={pipelineBusy || sepBusy || tabBusy}
             auto={autoPipeline}
             onAuto={setAutoPipeline}
-            onImport={onImportYouTube}
+            onImportFile={onImportFile}
+            onImportYouTube={onImportYouTube}
             onRecheck={recheckSidecar}
             audioFileName={hasAudio ? (doc.audioFileName ?? '원본 음원') : null}
             sourceUrl={doc.sourceUrl ?? null}

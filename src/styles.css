@@ -307,6 +307,13 @@ kbd {
 }
 .audio-file-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.youtube-panel code {
+.start-panel code {
   background: var(--bg-2); border-radius: 4px; padding: 1px 5px; font-size: 11px;
 }
+
+.start-panel > .btn.wide { display: block; text-align: center; }
+.btn.disabled { opacity: .4; pointer-events: none; }
+.start-panel .url-row { margin-top: 8px; }
+.youtube-help { margin-top: 10px; }
+.youtube-help summary { cursor: pointer; font-size: 12px; color: var(--dim); padding: 4px 0; }
+.youtube-help summary:hover { color: var(--fg); }

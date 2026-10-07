@@ -5,6 +5,9 @@ import {
   medianSmoothFrames,
   mergeNearbyNotes,
   resolveOverlaps,
+  dropOvertones,
+  attackEnvelope,
+  refineWithEnvelope,
   fitGrid,
   searchTempo,
   findRepeatPeriodMs,
@@ -301,6 +304,102 @@ describe('resolveOverlaps', () => {
   });
 });
 
+describe('dropOvertones', () => {
+  const note = (midi: number, startMs: number, endMs: number, confidence = 0.6): DetectedNote => ({
+    midi,
+    startMs,
+    endMs,
+    confidence,
+  });
+
+  it('removes overtones that straddle a note the model split in two', () => {
+    // Measured from basic-pitch on a plucked A1: one note, reported as four.
+    const out = dropOvertones([
+      note(33, 1242, 1416, 0.608),
+      note(52, 1312, 1556, 0.329),
+      note(45, 1335, 1498, 0.33),
+      note(33, 1416, 1649, 0.693),
+    ]);
+    expect(out.map((n) => n.midi)).toEqual([33, 33]);
+  });
+
+  it('keeps an upper note the model was surer of than the one under it', () => {
+    const out = dropOvertones([note(33, 0, 500, 0.3), note(45, 100, 400, 0.8)]);
+    expect(out).toHaveLength(2);
+  });
+
+  it('keeps an octave note that merely touches a lower one', () => {
+    // A real octave jump: the upper note mostly sounds after the lower one has ended.
+    const out = dropOvertones([note(28, 0, 500, 0.7), note(40, 450, 950, 0.5)]);
+    expect(out).toHaveLength(2);
+  });
+
+  it('ignores intervals that are not overtones', () => {
+    const out = dropOvertones([note(33, 0, 500, 0.7), note(40, 100, 400, 0.3)]);
+    expect(out).toHaveLength(2);
+  });
+});
+
+describe('attackEnvelope / refineWithEnvelope', () => {
+  const RATE = 22050;
+  /** Plucks of a decaying tone at the given times (ms), each lasting `lengthMs`. */
+  function plucks(timesMs: number[], lengthMs = 440, totalMs = 3000, hz = 55): Float32Array {
+    const out = new Float32Array(Math.round((totalMs / 1000) * RATE));
+    for (const t0 of timesMs) {
+      const start = Math.round((t0 / 1000) * RATE);
+      const len = Math.round((lengthMs / 1000) * RATE);
+      for (let i = 0; i < len && start + i < out.length; i++) {
+        out[start + i] = Math.exp((-2.5 * i) / RATE) * 0.8 * Math.sin((2 * Math.PI * hz * i) / RATE);
+      }
+    }
+    return out;
+  }
+  const note = (midi: number, startMs: number, endMs: number): DetectedNote => ({
+    midi,
+    startMs,
+    endMs,
+    confidence: 0.6,
+  });
+
+  it('puts the attack where the string was plucked', () => {
+    const env = attackEnvelope(plucks([1000]), RATE);
+    let best = 0;
+    for (let i = 1; i < env.riseDb.length; i++) if (env.riseDb[i] > env.riseDb[best]) best = i;
+    expect(Math.abs(best * env.hopMs - 1000)).toBeLessThanOrEqual(10);
+  });
+
+  it('moves an onset the model reported early onto the real attack', () => {
+    // basic-pitch put a plucked E1 about 100ms before it was played.
+    const env = attackEnvelope(plucks([1000], 440, 3000, 41.2), RATE);
+    const [moved] = refineWithEnvelope([note(28, 900, 1440)], env);
+    expect(Math.abs(moved.startMs - 1000)).toBeLessThanOrEqual(10);
+  });
+
+  it('joins a note the model cut in two where nothing was re-plucked', () => {
+    const env = attackEnvelope(plucks([1000]), RATE);
+    const out = refineWithEnvelope([note(33, 1000, 1150), note(33, 1150, 1440)], env);
+    expect(out).toHaveLength(1);
+    expect(out[0].endMs).toBe(1440);
+  });
+
+  it('keeps genuinely repeated notes apart — each one was plucked', () => {
+    const env = attackEnvelope(plucks([1000, 1250, 1500, 1750], 240), RATE);
+    const out = refineWithEnvelope(
+      [note(33, 1000, 1250), note(33, 1250, 1500), note(33, 1500, 1750), note(33, 1750, 1990)],
+      env,
+    );
+    expect(out).toHaveLength(4);
+    // Within the envelope's 5ms resolution of each pluck.
+    out.forEach((n, i) => expect(Math.abs(n.startMs - (1000 + i * 250))).toBeLessThanOrEqual(5));
+  });
+
+  it('leaves an onset alone when there is no attack near it (legato)', () => {
+    const env = attackEnvelope(new Float32Array(RATE * 2).fill(0.2), RATE);
+    const [kept] = refineWithEnvelope([note(33, 700, 1100)], env);
+    expect(kept.startMs).toBe(700);
+  });
+});
+
 describe('repairOctaveJumps', () => {
   const note = (midi: number, startMs: number, endMs: number): DetectedNote => ({
     midi,
@@ -555,6 +654,22 @@ describe('gridPhase', () => {
       confidence: 0.9,
     }));
     expect(gridPhase(notes, 120).meanAbsErrorMs).toBeLessThan(4);
+  });
+
+  it('reports a grid just before the beat as negative, not as nearly a whole slot late', () => {
+    // Onsets 2ms early. Wrapped into [0, slot) this came out as +123ms, and every note was
+    // written one sixteenth early against the recording.
+    const six = 60000 / 120 / 4;
+    const notes = [6, 10, 14, 18, 22, 26].map((k) => ({
+      midi: 33,
+      startMs: k * six - 2,
+      endMs: k * six + 400,
+      confidence: 0.9,
+    }));
+    const phase = gridPhase(notes, 120);
+    expect(phase.offsetMs).toBeCloseTo(-2, 0);
+    const placed = quantizeNotes(notes, 120, phase.offsetMs);
+    expect(placed.map((n) => n.startSixteenths)).toEqual([6, 10, 14, 18, 22, 26]);
   });
 });
 

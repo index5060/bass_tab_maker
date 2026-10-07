@@ -18,6 +18,9 @@ import {
   medianSmoothFrames,
   mergeNearbyNotes,
   resolveOverlaps,
+  dropOvertones,
+  attackEnvelope,
+  refineWithEnvelope,
   repairOctaveJumps,
   searchTempo,
   gridPhase,
@@ -56,6 +59,8 @@ export interface AutoTabSummary {
   bpm: number;
   engine: TabEngine;
   confidence: number;
+  /** Set when the AI engine could not run and the built-in detector stood in for it. */
+  fallbackReason?: string;
   // Reuse the result's stats type so the two can never drift apart again — they did once.
   stats: AutoTabResult['stats'];
 }
@@ -178,6 +183,71 @@ export async function transcribeBassStem(
   return result;
 }
 
+/* ------------------------------------------------ AI path, in the browser */
+
+/**
+ * Bass stem in, tab out, through basic-pitch running in the page — no install, no sidecar.
+ *
+ * Same model as the sidecar's, and the same writing pipeline after it (notesToAutoTab), so
+ * the only thing that differs from the sidecar path is where the network runs. Throws when
+ * the model cannot load; the caller falls back to the built-in detector.
+ */
+export async function transcribeBassStemAI(
+  bassStem: Blob,
+  options: AutoTabOptions,
+): Promise<AutoTabResult> {
+  const report = options.onProgress ?? (() => {});
+
+  report({ phase: 'decoding', progress: 0, message: '베이스 스템 디코딩 중' });
+  const { channels, durationMs } = await decodeToModelRate(bassStem);
+  // Normalised for the same reason as the YIN path: the model's thresholds are absolute, and
+  // a separated stem's level depends on the song, not the playing.
+  const { normalised, peak } = normalise(toMono(channels.left, channels.right));
+  // 44100 / 2 = 22050, the model's rate. A two-tap average is ample anti-aliasing here: the
+  // stem is bass, and the model is told to ignore everything above 500Hz anyway.
+  const mono = decimate(normalised, MODEL_SAMPLE_RATE / 22050);
+
+  report({ phase: 'analysing', progress: 0.1, message: 'AI 모델 불러오는 중' });
+  const backend = await loadBasicPitch();
+  const heard = await backend.detectNotes(mono, (fraction) =>
+    report({
+      phase: 'analysing',
+      progress: 0.1 + fraction * 0.75,
+      message: `AI 채보 중 ${Math.round(fraction * 100)}%`,
+    }),
+  );
+  // The model is sure of pitch and loose about time; the waveform is the reverse. Overtones
+  // come out first so the halves of a note they split can be joined back together.
+  const notes = refineWithEnvelope(dropOvertones(heard), attackEnvelope(mono, 22050));
+
+  report({ phase: 'transcribing', progress: 0.9, message: '탭으로 정리하는 중' });
+  const result = notesToAutoTab({
+    notes,
+    durationMs,
+    title: options.title,
+    bpm: options.bpm,
+    engine: 'basic-pitch',
+    peakBeforeNormalise: peak,
+  });
+  report({ phase: 'done', progress: 1 });
+  return result;
+}
+
+/**
+ * Load the TensorFlow.js-backed transcriber on demand (see basicPitchBackend.ts for why it is
+ * kept out of the static import graph).
+ */
+async function loadBasicPitch(): Promise<typeof import('./basicPitchBackend')> {
+  try {
+    return await import('./basicPitchBackend');
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `AI 채보 엔진을 불러오지 못했습니다. 프로젝트 폴더에서 "npm install"을 다시 실행하세요. (원문: ${detail})`,
+    );
+  }
+}
+
 /* --------------------------------------------------------- notes -> tab */
 
 export interface NotesToTabInput {
@@ -205,8 +275,9 @@ export function notesToAutoTab(input: NotesToTabInput): AutoTabResult {
   // detector — the segmenter already filtered its own.
   // 28..67 is E1..G4 — the range of a standard-tuned (E A D G) 4-string bass.
   const inRange = input.notes.filter((n) => n.midi >= 28 && n.midi <= 67);
-  // basic-pitch hears chords; a bass line is one note at a time (see resolveOverlaps).
-  const monophonic = resolveOverlaps(inRange);
+  // basic-pitch hears chords; a bass line is one note at a time. Overtones go first, judged
+  // against everything under them, then whatever still overlaps is settled pairwise.
+  const monophonic = resolveOverlaps(dropOvertones(inRange));
 
   // Merge only for the YIN path. There it heals level-gate dropouts inside one held note;
   // basic-pitch detects onsets explicitly, so a same-pitch note after a short gap is a real

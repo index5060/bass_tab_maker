@@ -20,13 +20,18 @@ import path from 'node:path';
 const ROOT = import.meta.dirname;
 const PORT = Number(process.env.PORT ?? 5270);
 const STASH = path.join(ROOT, '.degrade-stash');
-const PACKAGES = ['onnxruntime-web', 'demucs-web'];
+// basic-pitch joined these when AI transcription moved into the page: same rule, the app
+// must survive without it.
+const PACKAGES = ['onnxruntime-web', 'demucs-web', '@spotify/basic-pitch'];
 
 function stash() {
   fs.mkdirSync(STASH, { recursive: true });
   for (const p of PACKAGES) {
     const from = path.join(ROOT, 'node_modules', p);
-    if (fs.existsSync(from)) fs.renameSync(from, path.join(STASH, p));
+    if (!fs.existsSync(from)) continue;
+    // Scoped packages ("@scope/name") need their scope folder in the stash too.
+    fs.mkdirSync(path.dirname(path.join(STASH, p)), { recursive: true });
+    fs.renameSync(from, path.join(STASH, p));
   }
 }
 
@@ -44,7 +49,7 @@ let browser;
 let report = {};
 
 try {
-  console.log('▶ onnxruntime-web / demucs-web 를 node_modules에서 제거');
+  console.log('▶ onnxruntime-web / demucs-web / @spotify/basic-pitch 를 node_modules에서 제거');
   stash();
 
   server = spawn('npx', ['vite', '--port', String(PORT), '--force'], { cwd: ROOT });

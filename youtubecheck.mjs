@@ -100,16 +100,16 @@ try {
 
   await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.at-container svg, .at-container canvas', { timeout: 30000 });
-  await page.waitForSelector('.youtube-panel .badge', { timeout: 10000 });
+  await page.waitForSelector('.start-panel .badge', { timeout: 10000 });
 
-  const input = page.locator('.youtube-panel input[type="url"]');
-  const go = page.locator('.youtube-panel button', { hasText: '가져오기' });
+  const input = page.locator('.start-panel input[type="url"]');
+  const go = page.locator('.start-panel button', { hasText: '가져오기' });
 
   // Not a link: the button must stay off and say why.
   await input.fill('그냥 노래 제목');
   const rejectsText = {
     disabled: await go.isDisabled(),
-    warning: await page.locator('.youtube-panel .hint.warn').first().textContent(),
+    warning: await page.locator('.start-panel .hint.warn').first().textContent(),
   };
 
   // The full run, from a messy share link with a playlist and a timestamp attached.
@@ -154,7 +154,7 @@ try {
   // Download only: with auto off it must stop after the audio, as a new song. Pasted without
   // a scheme, the way links often get copied — the browser's own url validation used to
   // block exactly this submit without a word.
-  await page.locator('.youtube-panel .auto-row input').uncheck();
+  await page.locator('.start-panel .auto-row input').uncheck();
   await input.fill('music.youtube.com/watch?v=abcdefghijk');
   await go.click();
   await page.waitForFunction(() => document.querySelector('.pipeline-step')?.classList.contains('done'), {

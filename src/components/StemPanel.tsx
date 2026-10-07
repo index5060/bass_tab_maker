@@ -119,16 +119,8 @@ export function StemPanel(props: StemPanelProps) {
                 <span className="dim tiny">아는 값이 있으면 입력 — 자동 추정보다 정확합니다</span>
               </div>
               <button className="btn btn-primary wide" onClick={props.onTranscribe}>
-                베이스 탭 자동 생성
-                {props.sidecar?.reachable && props.sidecar.basicPitch ? ' (AI)' : ''}
+                베이스 탭 자동 생성 (AI)
               </button>
-              {props.sidecar?.reachable && !props.sidecar.basicPitch && (
-                <p className="hint tiny">
-                  사이드카에 <code>basic-pitch</code>를 설치하면 학습된 모델로 채보 정확도가
-                  올라갑니다: <code>py -3.12 -m pip install basic-pitch</code> 후 사이드카
-                  재시작.
-                </p>
-              )}
               {props.tabResult ? (
                 props.tabResult.notes === 0 ? (
                   <div className="isolation-diag">
@@ -180,6 +172,11 @@ export function StemPanel(props: StemPanelProps) {
                       {(props.tabResult.confidence * 100).toFixed(0)}%. 초안이니 귀로 확인하며
                       고치세요.
                     </p>
+                    {props.tabResult.fallbackReason && (
+                      <p className="hint warn">
+                        AI 채보를 쓰지 못해 내장 채보로 만들었습니다 — {props.tabResult.fallbackReason}
+                      </p>
+                    )}
                     {tabWarnings(props.tabResult).map((warning) => (
                       <p className="hint warn" key={warning}>
                         {warning}
