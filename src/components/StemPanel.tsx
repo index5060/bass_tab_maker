@@ -2,6 +2,7 @@ import type { SeparationProgress, StemSet } from '../lib/stems';
 import type { IsolationDiagnosis, SeparationCapability } from '../lib/separator';
 import type { AutoTabProgress, AutoTabSummary } from '../lib/autoTab';
 import type { SidecarInfo, SidecarSettings } from '../lib/sidecar';
+import { AUDIO_FILE_ACCEPT } from '../lib/audioImport';
 
 const MODE_LABEL: Record<'webgpu' | 'wasm-threaded' | 'wasm-single', string> = {
   webgpu: 'WebGPU',
@@ -389,7 +390,7 @@ export function StemPanel(props: StemPanelProps) {
             <input
               id="stem-import"
               type="file"
-              accept="audio/*"
+              accept={AUDIO_FILE_ACCEPT}
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0];

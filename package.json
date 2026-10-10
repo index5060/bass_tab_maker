@@ -21,6 +21,7 @@
     "test:autotab": "node autotabcheck.mjs",
     "test:sidecar": "node sidecarcheck.mjs",
     "test:start": "node startcheck.mjs",
+    "test:wav": "node wavcheck.mjs",
     "test:youtube": "node youtubecheck.mjs",
     "sidecar": "node sidecar/run.mjs",
     "replay": "node replay.mjs"

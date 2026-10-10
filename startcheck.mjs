@@ -177,6 +177,7 @@ try {
       const steps = [...document.querySelectorAll('.pipeline-step')];
       return steps.length === 3 && (steps.every((s) => s.classList.contains('done')) || steps.some((s) => s.classList.contains('error')));
     },
+    undefined,
     { timeout: 300000 },
   );
   await page.waitForTimeout(1500);

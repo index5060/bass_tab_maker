@@ -135,6 +135,7 @@ try {
   await page.locator('.stem-panel button', { hasText: '베이스 탭 자동 생성' }).click();
   await page.waitForFunction(
     () => !document.querySelector('.stem-panel .phase-line'),
+    undefined,
     { timeout: 60000 },
   );
   await page.waitForTimeout(2500); // autosave

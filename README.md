@@ -19,6 +19,24 @@ YouTube 링크로 시작하는 것만은 로컬 도우미(사이드카 + yt-dlp)
 YouTube 음원을 직접 못 읽습니다. 도우미가 떠 있으면 같은 패널에 링크 칸이 나타납니다
 → [YouTube 링크 → 탭](#youtube-링크--탭)
 
+### WAV는 형식을 가리지 않습니다
+
+WAV라도 속은 제각각입니다 — 16/24/32비트 정수, 32/64비트 float, 8비트, µ-law/A-law,
+ADPCM 압축, 5.1채널, 4GB 넘는 녹음용 RF64, 앞에 메타데이터 청크가 잔뜩 붙은 방송용 WAV.
+**브라우저는 이 중 일부만 읽고, 무엇을 읽는지는 브라우저마다 다릅니다.** Chromium에서 직접
+재보니 64비트 float와 ADPCM은 재생도 디코딩도 안 됐습니다. 예전에는 그런 파일이 들어가면
+소리가 안 나고 화면에도 아무 말이 없었습니다.
+
+그래서 WAV는 브라우저가 아니라 앱이 직접 읽습니다(`src/lib/wav.ts`):
+
+- **흔한 16/24비트 PCM은 그대로 둡니다** — 모든 브라우저가 재생하고, 원본 바이트를 지킵니다.
+- **나머지 형식은 불러올 때 16비트 PCM 스테레오로 바꿔** 저장합니다. 진행 표시 아래에 무엇에서
+  바꿨는지 적힙니다. 5.1채널은 센터·LFE(베이스가 주로 있는 채널)를 살려서 스테레오로 접습니다.
+- WAV인지는 **확장자가 아니라 파일 내용으로** 판단합니다(`.WAV`, `.wave`, 확장자가 틀린 파일도 됨).
+- 그래도 못 읽는 형식(WAV 안에 MP3가 든 경우 등)은 브라우저에 한 번 더 맡기고, 그것도 안 되면
+  **어떤 형식이라 안 되는지와 어떻게 다시 저장하면 되는지**를 화면에 띄웁니다.
+- 디코더는 ffmpeg가 만든 기준 파일과 표본 단위로 비교해 검증합니다(`wav.test.ts`).
+
 ### 설치 없이 쓸 때 알아둘 것
 
 - **처음 분리할 때 모델 약 172MB를 한 번 받습니다.** 받은 모델은 브라우저 저장소(Cache
@@ -57,7 +75,7 @@ npm start            # vite build + vite preview 한 방에
 테스트:
 
 ```bash
-npm test             # 유닛 테스트 (싱크·스템 수학·음정·채보·링크·모델 캐시, 199개)
+npm test             # 유닛 테스트 (싱크·스템 수학·음정·채보·링크·모델 캐시·WAV, 235개)
 npm run test:cold    # 콜드스타트 회귀 테스트 (실제 브라우저)
 npm run test:cursor  # 재생 커서가 실제로 보이고 움직이는지
 npm run test:stems   # cross-origin isolation + 스템 UI 전제조건
@@ -68,6 +86,7 @@ npm run test:dup     # 새로고침해도 곡이 안 불어나는지 / 무음 �
 npm run test:autotab # 자동 채보가 실제 앱에서 끝까지 도는지
 npm run test:sidecar # 사이드카 프로토콜 + isolated 페이지의 교차 출처 호출
 npm run test:start   # 설치 없이 파일 → 스템 → 탭 (실제 브라우저 AI 모델로 채보 검증)
+npm run test:wav     # WAV 12가지 형식이 실제 브라우저에서 재생·디코딩되는지 + float64 WAV → 탭
 npm run test:youtube # 링크 → 음원 → 스템 → 탭 전 구간 + 파일 저장 + 실패 경로
 MODE=preview npm run test:cold   # 빌드 경로까지
 
@@ -638,6 +657,8 @@ src/
     youtube.ts          YouTube 링크 판별 / 영상 하나로 정규화. 테스트 있음
     basicPitchBackend.ts  브라우저 AI 채보(basic-pitch, TensorFlow.js). autoTab에서 지연 로드만
     modelCache.ts       172MB 분리 모델을 한 번만 받도록 Cache Storage에 보관. 테스트 있음
+    wav.ts            ★ WAV 직접 판독 (PCM/float/µ·A-law/ADPCM/RF64/서라운드). ffmpeg 기준과 비교 테스트
+    audioImport.ts      불러온 음원 확인 — 브라우저가 못 여는 WAV는 16비트 PCM으로 변환
     pitch.ts          ★ YIN 음정 검출. 순수 함수, 테스트 26개
     transcribe.ts     ★ 음표 분할 / 그리드 피팅 / 지판 배치 / alphaTex 작성
     autoTab.ts        ★ 채보 오케스트레이션. notesToAutoTab()을 두 엔진이 공유
@@ -661,6 +682,7 @@ coldstart.mjs           ★ 콜드스타트 회귀 테스트
 smoke.mjs               기능 스모크 테스트 (서버가 이미 떠 있다고 가정)
 replay.mjs            ★ 진단 JSON을 실제 파이프라인에 다시 통과시키는 도구
 startcheck.mjs        ★ 설치 없는 파일 → 스템 → 탭 전 구간 테스트 (실제 AI 모델)
+wavcheck.mjs          ★ WAV 12가지 형식이 실제 브라우저에서 재생되는지
 youtubecheck.mjs      ★ 링크 → 음원 → 스템 → 탭 전 구간 테스트
 sidecar/
   server.py             YouTube 다운로드 + 분리 + AI 채보 로컬 서버 (표준 라이브러리만)

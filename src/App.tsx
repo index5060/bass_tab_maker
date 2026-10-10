@@ -42,6 +42,7 @@ import {
   type StorageStatus,
 } from './lib/storage';
 import { encodeSongFile, decodeSongFile, songFileName } from './lib/songFile';
+import { AUDIO_FILE_ACCEPT, prepareAudioFile } from './lib/audioImport';
 import {
   probeSidecar,
   transcribeViaSidecar,
@@ -73,6 +74,8 @@ interface IncomingAudio {
   artist: string;
   /** Set only when it was fetched from a link. */
   url?: string;
+  /** Set when the file had to be converted on the way in, saying from what. */
+  note?: string;
 }
 
 export default function App() {
@@ -290,7 +293,16 @@ export default function App() {
           return grown === d.scoreData ? d : { ...d, scoreData: grown, updatedAt: Date.now() };
         });
       })
-      .catch(() => undefined);
+      .catch((e) => {
+        // This used to be swallowed, so a recording the browser could not play simply never
+        // made a sound — no message anywhere. Say so instead.
+        if (cancelled) return;
+        const name = doc.audioFileName ? `"${doc.audioFileName}"` : '원본 음원';
+        setSaveError(
+          `${name}을(를) 재생할 수 없습니다 (${e instanceof Error ? e.message : String(e)}). ` +
+            'WAV(PCM 16/24비트), MP3, M4A 중 하나로 다시 저장해서 넣어 주세요.',
+        );
+      });
     return () => {
       cancelled = true;
     };
@@ -642,6 +654,7 @@ export default function App() {
         const audio = await getAudio((progress, message) =>
           setPipeline({ source, step: 'download', auto, progress, message }),
         );
+        const note = audio.note;
 
         // An untouched "새 곡" is taken over rather than left behind as an empty row.
         const open = docRef.current;
@@ -670,19 +683,19 @@ export default function App() {
         setSepProgress(IDLE_PROGRESS);
 
         if (!auto) {
-          setPipeline({ source, step: 'done', auto, progress: 1 });
+          setPipeline({ source, step: 'done', auto, progress: 1, note });
           return;
         }
 
         step = 'separate';
-        setPipeline({ source, step, auto, progress: 0 });
+        setPipeline({ source, step, auto, progress: 0, note });
         const stems = await runSeparation(song.id, audio.file);
 
         step = 'transcribe';
-        setPipeline({ source, step, auto, progress: 0 });
+        setPipeline({ source, step, auto, progress: 0, note });
         await runTranscription(song.id, stems, song.title);
 
-        setPipeline({ source, step: 'done', auto, progress: 1 });
+        setPipeline({ source, step: 'done', auto, progress: 1, note });
       } catch (e) {
         setPipeline({ source, step, auto, progress: 0, error: e instanceof Error ? e.message : String(e) });
       }
@@ -692,12 +705,35 @@ export default function App() {
 
   const onImportFile = useCallback(
     (file: File) =>
-      startSongPipeline('file', async () => ({
-        file,
-        title: file.name.replace(/\.[^.]+$/, '') || '새 곡',
-        artist: '',
-      })),
+      startSongPipeline('file', async (onProgress) => {
+        onProgress(0.3, '파일 확인 중');
+        const prepared = await prepareAudioFile(file);
+        return {
+          file: prepared.file,
+          title: file.name.replace(/\.[^.]+$/, '') || '새 곡',
+          artist: '',
+          note: prepared.note ?? undefined,
+        };
+      }),
     [startSongPipeline],
+  );
+
+  /**
+   * "원본 음원" in the top bar: attach a recording to the open song (not a new one), through
+   * the same check-and-convert as the pipeline so a WAV in any format plays.
+   */
+  const onAttachAudio = useCallback(
+    async (picked: File) => {
+      try {
+        // Converted silently here: the red bar is for things that went wrong, and this did not.
+        const { file } = await prepareAudioFile(picked);
+        attachToSong({ audioBlob: file, audioFileName: file.name, stems: undefined }, picked.name.replace(/\.[^.]+$/, ''));
+        setSaveError(null);
+      } catch (e) {
+        setSaveError(`음원을 불러오지 못했습니다: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [attachToSong],
   );
 
   const onImportYouTube = useCallback(
@@ -952,15 +988,7 @@ export default function App() {
           <FilePick accept=".gp,.gp3,.gp4,.gp5,.gpx,.xml,.musicxml" onPick={onPickScore}>
             악보 열기
           </FilePick>
-          <FilePick
-            accept="audio/*,video/*"
-            onPick={(f) =>
-              attachToSong(
-                { audioBlob: f, audioFileName: f.name, stems: undefined },
-                f.name.replace(/\.[^.]+$/, ''),
-              )
-            }
-          >
+          <FilePick accept={AUDIO_FILE_ACCEPT} onPick={onAttachAudio}>
             원본 음원
           </FilePick>
           <button

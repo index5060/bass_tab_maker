@@ -120,6 +120,7 @@ try {
       const steps = [...document.querySelectorAll('.pipeline-step')];
       return steps.length === 3 && steps.every((s) => s.classList.contains('done'));
     },
+    undefined,
     { timeout: 120000 },
   );
   await page.waitForTimeout(1500); // let the score render and the autosave land
@@ -157,7 +158,7 @@ try {
   await page.locator('.start-panel .auto-row input').uncheck();
   await input.fill('music.youtube.com/watch?v=abcdefghijk');
   await go.click();
-  await page.waitForFunction(() => document.querySelector('.pipeline-step')?.classList.contains('done'), {
+  await page.waitForFunction(() => document.querySelector('.pipeline-step')?.classList.contains('done'), undefined, {
     timeout: 30000,
   });
   await page.waitForTimeout(1000);

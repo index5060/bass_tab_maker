@@ -14,6 +14,7 @@
 
 import { decodeToModelRate, MODEL_SAMPLE_RATE, type ProgressFn, type Separator } from './separator';
 import { encodeWav, type StemSet } from './stems';
+import { readWavInfo } from './wav';
 
 export const DEFAULT_SIDECAR_URL = 'http://127.0.0.1:8765';
 
@@ -133,14 +134,18 @@ interface JobStatus {
   hasNoBass: boolean;
 }
 
-/** Read sample rate and duration straight out of the WAV header — no need to decode 86MB. */
-async function readWavInfo(blob: Blob): Promise<{ sampleRate: number; durationMs: number }> {
-  const head = new DataView(await blob.slice(0, 44).arrayBuffer());
-  const sampleRate = head.getUint32(24, true);
-  const byteRate = head.getUint32(28, true);
-  const dataBytes = head.getUint32(40, true);
-  const durationMs = byteRate > 0 ? (dataBytes / byteRate) * 1000 : 0;
-  return { sampleRate, durationMs };
+/**
+ * Read sample rate and duration from the WAV header — no need to decode 86MB. Walks the chunks
+ * rather than assuming the 44-byte layout, which any metadata chunk breaks.
+ */
+async function readWavDuration(blob: Blob): Promise<{ sampleRate: number; durationMs: number }> {
+  const head = await blob.slice(0, Math.min(blob.size, 1 << 20)).arrayBuffer();
+  const info = readWavInfo(head, blob.size);
+  const bytesPerSecond = info.sampleRate * info.blockAlign;
+  return {
+    sampleRate: info.sampleRate,
+    durationMs: bytesPerSecond > 0 ? (info.dataBytes / bytesPerSecond) * 1000 : 0,
+  };
 }
 
 /**
@@ -228,7 +233,7 @@ export class SidecarSeparator implements Separator {
       : null;
     if (!minusBass) throw new Error('사이드카가 no_bass.wav를 돌려주지 않았습니다.');
 
-    const info = await readWavInfo(bass);
+    const info = await readWavDuration(bass);
 
     // Tidy up the temp directory rather than leaving hundreds of MB behind per run.
     void fetch(`${this.baseUrl}/jobs/${id}`, { method: 'DELETE' }).catch(() => undefined);

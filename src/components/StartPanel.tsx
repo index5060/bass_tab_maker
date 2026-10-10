@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { SidecarInfo } from '../lib/sidecar';
 import { parseYouTubeUrl } from '../lib/youtube';
+import { AUDIO_FILE_ACCEPT } from '../lib/audioImport';
 
 /** The three steps from a recording to a tab, in order. */
 export type PipelineStep = 'download' | 'separate' | 'transcribe';
@@ -19,6 +20,8 @@ export interface PipelineState {
   message?: string;
   /** Set when a step failed; `step` is then the one that failed. */
   error?: string;
+  /** Something worth knowing about the recording, e.g. that it was converted on the way in. */
+  note?: string;
 }
 
 const FIRST_STEP_LABEL: Record<PipelineSource, string> = {
@@ -73,7 +76,7 @@ export function StartPanel(props: StartPanelProps) {
       <input
         id="start-file"
         type="file"
-        accept="audio/*,video/*"
+        accept={AUDIO_FILE_ACCEPT}
         hidden
         disabled={props.busy}
         onChange={(e) => {
@@ -82,7 +85,9 @@ export function StartPanel(props: StartPanelProps) {
           e.target.value = '';
         }}
       />
-      <p className="hint tiny">mp3 · m4a · wav · flac, 영상 파일도 됩니다. 설치 없이 이 브라우저 안에서 처리됩니다.</p>
+      <p className="hint tiny">
+        WAV(모든 형식) · mp3 · m4a · flac, 영상 파일도 됩니다. 설치 없이 이 브라우저 안에서 처리됩니다.
+      </p>
 
       {canYouTube && <YouTubeRow busy={props.busy} onImport={props.onImportYouTube} />}
 
@@ -97,6 +102,7 @@ export function StartPanel(props: StartPanelProps) {
       </label>
 
       {props.pipeline && <PipelineSteps pipeline={props.pipeline} />}
+      {props.pipeline?.note && <p className="hint tiny">{props.pipeline.note}</p>}
 
       {props.audioFileName && !props.busy && (
         <div className="audio-file-row">

@@ -20,6 +20,7 @@ import {
   type StemChannels,
   type SeparationProgress,
 } from './stems';
+import { decodeWav, looksLikeWav, toStereo, UnsupportedWavError } from './wav';
 
 /** HTDemucs was trained at 44.1kHz; anything else has to be resampled first. */
 export const MODEL_SAMPLE_RATE = 44100;
@@ -188,7 +189,11 @@ function detectBrowser(): string {
 /* ---------------------------------------------------------------- decoding */
 
 /**
- * Decode any browser-supported audio file to stereo Float32 at 44.1kHz.
+ * Decode an audio file to stereo Float32 at 44.1kHz.
+ *
+ * WAV is read by wav.ts rather than by the browser, so every WAV format decodes the same way
+ * in every browser (Chromium cannot decode 64-bit float or ADPCM WAV at all). Anything else —
+ * and any WAV format wav.ts does not handle — goes through decodeAudioData.
  *
  * OfflineAudioContext does the resampling: constructing it at the target rate and rendering
  * the decoded buffer through it is the standard trick, and it is far better quality than a
@@ -199,12 +204,33 @@ export async function decodeToModelRate(
 ): Promise<{ channels: StemChannels; durationMs: number }> {
   const bytes = await source.arrayBuffer();
 
-  const decodeCtx = new AudioContext();
-  let decoded: AudioBuffer;
-  try {
-    decoded = await decodeCtx.decodeAudioData(bytes);
-  } finally {
-    void decodeCtx.close();
+  let decoded: AudioBuffer | null = null;
+  if (looksLikeWav(new Uint8Array(bytes, 0, Math.min(12, bytes.byteLength)))) {
+    try {
+      const wav = decodeWav(bytes);
+      const { left, right } = toStereo(wav.channels);
+      decoded = new AudioBuffer({ numberOfChannels: 2, length: Math.max(1, left.length), sampleRate: wav.sampleRate });
+      decoded.copyToChannel(left, 0);
+      decoded.copyToChannel(right, 1);
+    } catch (e) {
+      if (!(e instanceof UnsupportedWavError)) throw e;
+    }
+  }
+
+  if (!decoded) {
+    const decodeCtx = new AudioContext();
+    try {
+      // decodeAudioData detaches what it is given; keep `bytes` intact for the message below.
+      decoded = await decodeCtx.decodeAudioData(bytes.slice(0));
+    } catch {
+      const name = (source as File).name;
+      throw new Error(
+        `${name ? `"${name}"` : '이 음원'}을(를) 이 브라우저가 읽지 못합니다. ` +
+          'WAV(PCM), MP3, M4A, FLAC 중 하나로 저장해서 다시 넣어 주세요.',
+      );
+    } finally {
+      void decodeCtx.close();
+    }
   }
 
   let buffer = decoded;
