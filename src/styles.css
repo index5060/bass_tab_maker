@@ -168,6 +168,11 @@ input[type='range'] { accent-color: var(--accent); }
 
 .row.gap { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
 
+.auto-sync {
+  display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.auto-sync .hint { margin: 0; }
 .anchor-editor { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .anchor-target { font-size: 13px; background: var(--bg-2); border-radius: 6px; padding: 7px 10px; }
 .audio-scrub { display: flex; align-items: center; gap: 8px; }

@@ -1,8 +1,24 @@
 import { useMemo } from 'react';
 import type { SyncAnchor } from '../lib/types';
 import { normalizeAnchors, isUsable, tempoRatioAt, driftIfLinear } from '../lib/syncmap';
+import { LOW_AGREEMENT, type AutoSyncSummary } from '../lib/autoSync';
+
+/** Score files alphaTab reads. */
+const SCORE_FILE_ACCEPT = '.gp,.gp3,.gp4,.gp5,.gpx,.xml,.musicxml';
 
 export interface SyncPanelProps {
+  /** The last automatic sync of this song, if one was run. */
+  autoSync: AutoSyncSummary | null;
+  /** What the automatic sync is doing, while it runs. */
+  syncWork: string | null;
+  /** Separation or transcription is running: the sync waits for them. */
+  syncBlocked: boolean;
+  syncError: string | null;
+  /** Line the score on screen up with the recording. */
+  onAutoSync: () => void;
+  /** Put a tab file into this song (recording and stems kept) and line it up. */
+  onInsertScore: (file: File) => void;
+
   anchors: SyncAnchor[];
   currentTick: number;
   currentBarIndex: number;
@@ -74,10 +90,13 @@ export function SyncPanel(props: SyncPanelProps) {
         <p className="hint">원본 음원을 불러오면 여기서 싱크를 맞춥니다.</p>
       ) : (
         <>
+          <AutoSync {...props} />
+
           {!usable && !props.anchorMode && (
             <p className="hint">
               앵커가 없어도 재생은 됩니다 — 지금은 탭 시간과 음원 시간을 1:1로 맞추고 있어서,
-              곡이 1마디부터 바로 시작하면 대체로 맞습니다. 어긋나면 앵커를 찍어 바로잡으세요.
+              곡이 1마디부터 바로 시작하면 대체로 맞습니다. 어긋나면 위의 자동 맞추기나 앵커로
+              바로잡으세요.
             </p>
           )}
 
@@ -180,6 +199,65 @@ export function SyncPanel(props: SyncPanelProps) {
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * An existing tab, synced to the recording automatically. Put first in the panel because it
+ * is the reliable way to a right tab: the notes come from someone who wrote them down, and
+ * only where each bar falls in the recording has to be found.
+ */
+function AutoSync(props: SyncPanelProps) {
+  const busy = props.syncWork !== null || props.syncBlocked;
+  const summary = props.autoSync;
+  const low = !!summary && summary.agreement < LOW_AGREEMENT;
+  return (
+    <div className="auto-sync">
+      <label className={`btn btn-primary wide ${busy ? 'disabled' : ''}`} htmlFor="score-insert">
+        이 곡에 기존 악보 넣기 (.gp)
+      </label>
+      <input
+        id="score-insert"
+        type="file"
+        accept={SCORE_FILE_ACCEPT}
+        hidden
+        disabled={busy}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) props.onInsertScore(f);
+          e.target.value = '';
+        }}
+      />
+      <button className="btn wide" disabled={busy} onClick={props.onAutoSync}>
+        지금 악보를 원곡에 자동으로 맞추기
+      </button>
+      <p className="hint tiny">
+        Guitar Pro(.gp .gp5 .gpx)나 MusicXML 악보를 넣으면 베이스 트랙을 찾아 원곡의 마디마다
+        맞춥니다. 음원은 그대로 두고 악보만 바뀝니다.
+      </p>
+
+      {props.syncWork !== null && <p className="hint">{props.syncWork}…</p>}
+      {props.syncWork === null && props.syncBlocked && (
+        <p className="hint">베이스 분리·채보가 끝나면 누를 수 있습니다.</p>
+      )}
+      {props.syncError && <p className="hint warn">{props.syncError}</p>}
+      {summary && (
+        <p className={`hint ${low ? 'warn' : ''}`}>
+          자동 싱크: {summary.trackName} 트랙 {summary.bars}마디 · 일치도 {Math.round(summary.agreement * 100)}%
+          {summary.beatsPerQuarter !== 1 && ` · 녹음의 ${summary.beatsPerQuarter}박이 악보의 4분음표`}
+          {summary.jumps > 0 && ` · 악보에 없는 구간 ${summary.jumps}곳은 건너뜀`}
+        </p>
+      )}
+      {low && (
+        <p className="hint warn">
+          일치도가 낮습니다. 악보와 음원이 다른 곡이거나, 다른 버전(라이브·편곡·조옮김)일 수
+          있습니다. 재생해 보고 어긋나면 앵커 모드로 고치세요.
+        </p>
+      )}
+      {summary && !low && summary.weakBars.length > 0 && (
+        <p className="hint tiny">악보와 잘 안 맞은 마디: {summary.weakBars.join(', ')}</p>
+      )}
+    </div>
   );
 }
 

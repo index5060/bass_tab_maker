@@ -19,13 +19,14 @@
     "test:wiring": "node wiringcheck.mjs",
     "test:dup": "node duplicatecheck.mjs",
     "test:autotab": "node autotabcheck.mjs",
+    "test:autosync": "node autosynccheck.mjs",
     "test:sidecar": "node sidecarcheck.mjs",
     "test:start": "node startcheck.mjs",
     "test:wav": "node wavcheck.mjs",
     "test:youtube": "node youtubecheck.mjs",
     "sidecar": "node sidecar/run.mjs",
     "replay": "node replay.mjs",
-    "eval": "vitest run --config vitest.eval.config.ts && node -e \"process.stdout.write(require('fs').readFileSync('eval/out/report.txt','utf8'))\""
+    "eval": "vitest run --config vitest.eval.config.ts && node -e \"for (const f of ['report.txt','sync-report.txt']) { try { process.stdout.write(require('fs').readFileSync('eval/out/'+f,'utf8')) } catch {} }\""
   },
   "dependencies": {
     "@coderline/alphatab": "^1.8.4",

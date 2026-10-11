@@ -122,8 +122,8 @@ export function StemPanel(props: StemPanelProps) {
                 />
                 <span className="dim tiny">아는 값이 있으면 입력 — 비워 두면 반주에서 찾습니다</span>
               </div>
-              <button className="btn btn-primary wide" onClick={props.onTranscribe}>
-                베이스 탭 자동 생성
+              <button className="btn wide" onClick={props.onTranscribe}>
+                베이스 탭 자동 생성 (초안)
               </button>
               {props.tabResult ? (
                 props.tabResult.notes === 0 ? (
@@ -150,6 +150,10 @@ export function StemPanel(props: StemPanelProps) {
                         {warning}
                       </p>
                     ))}
+                    <p className="hint tiny">
+                      자동 채보는 초안입니다. 이 곡의 악보 파일(.gp)이 있다면 아래 싱크의 “이 곡에 기존
+                      악보 넣기”가 정확합니다 — 음표는 악보 그대로, 마디마다 원곡에 맞춰집니다.
+                    </p>
 
                     {/*
                       Where "one" is and which tempo level is the beat are the two calls the
@@ -196,7 +200,8 @@ export function StemPanel(props: StemPanelProps) {
                 <p className="hint">
                   반주에서 박자를 찾고, 그 박마다 16분음표 칸으로 나눠 베이스 스템에서 음을 읽어
                   4현 베이스 탭(E A D G)으로 적습니다. 슬라이드·해머온·고스트노트는 평범한
-                  음표로 나옵니다.
+                  음표로 나옵니다. 악보 파일(.gp)이 있다면 아래 싱크의 “이 곡에 기존 악보 넣기”가
+                  더 정확합니다.
                 </p>
               )}
             </>

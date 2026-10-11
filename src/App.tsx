@@ -14,6 +14,7 @@ import { normalizeAnchors, isUsable, tickToAudioMs } from './lib/syncmap';
 import { BLANK_ALPHATEX, DEMO_ALPHATEX, DEMO_DOC_ID, blankAlphaTex, isBlankScore } from './lib/demoScore';
 import { analyseStems, summariseTab, type TabProgress, type TabSummary } from './lib/tab/client';
 import { writeTabFrom, type TabAnalysis, type TabResult } from './lib/tab';
+import { bassTrackOf, readScore, summariseSync, syncScore, type AutoSyncSummary, type ScoreSync } from './lib/autoSync';
 import {
   newPracticeDoc,
   type PracticeDoc,
@@ -59,6 +60,14 @@ import {
 import './styles.css';
 
 const IDLE_PROGRESS: SeparationProgress = { phase: 'idle', progress: 0 };
+
+/** What the tab analysis heard in a song's stems. */
+interface HeardStems {
+  songId: string;
+  /** The stems it was run on: new stems make it stale. */
+  stems: StemSet;
+  analysis: TabAnalysis;
+}
 
 /** A recording arriving at the start of the pipeline, from a file or a link. */
 interface IncomingAudio {
@@ -111,7 +120,14 @@ export default function App() {
    * (bar 1 a beat later, 3/4 instead of 4/4) reuses it instead of listening again, and the
    * diagnostic export saves it.
    */
-  const analysisRef = useRef<{ songId: string; analysis: TabAnalysis } | null>(null);
+  const analysisRef = useRef<HeardStems | null>(null);
+  /** An analysis made for an automatic sync, kept for the next one on the same stems. */
+  const syncAnalysisRef = useRef<HeardStems | null>(null);
+  /** The last automatic sync of a tab to the recording, for the song it was run on. */
+  const [autoSync, setAutoSync] = useState<AutoSyncSummary | null>(null);
+  /** What the automatic sync is doing, while it runs. */
+  const [syncWork, setSyncWork] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
   /** The link -> audio -> stem -> tab run, while it is going and after it ends. */
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [autoPipeline, setAutoPipeline] = useState(true);
@@ -564,7 +580,7 @@ export default function App() {
           scoreData: tab.alphaTex,
           syncAnchors: toSyncAnchors(tab),
         });
-        analysisRef.current = { songId, analysis };
+        analysisRef.current = { songId, stems, analysis };
         if (docRef.current.id === songId) setTabResult(summariseTab(songId, analysis, tab, bpm));
         return tab;
       } finally {
@@ -572,6 +588,130 @@ export default function App() {
       }
     },
     [applyToSong],
+  );
+
+  /**
+   * What was heard in a song's stems, for lining a tab up with: the last analysis when it was
+   * of these same stems and found the tempo by itself (a typed tempo shapes the beat grid),
+   * else a new one.
+   */
+  const hearStems = useCallback(async (songId: string, stems: StemSet): Promise<TabAnalysis> => {
+    for (const held of [analysisRef.current, syncAnalysisRef.current]) {
+      if (held && held.songId === songId && held.stems === stems && !held.analysis.pinnedBpm) return held.analysis;
+    }
+    const analysis = await analyseStems(stems, { onProgress: (p) => setSyncWork(`원곡 듣는 중 — ${p.message}`) });
+    // Not into analysisRef: that one belongs to the auto tab and its buttons.
+    syncAnalysisRef.current = { songId, stems, analysis };
+    return analysis;
+  }, []);
+
+  /**
+   * Line a score up with its song's recording. Makes the stems first when the song has none
+   * (the bass is what is matched, the band is where the beats come from). Null when the score
+   * has no bass notes to line up.
+   */
+  const lineUp = useCallback(
+    async (songId: string, score: ReturnType<typeof readScore>, preferredTrack: number): Promise<ScoreSync | null> => {
+      const song = docRef.current.id === songId ? docRef.current : await getSong(songId);
+      if (!song?.audioBlob) throw new Error('원본 음원이 없습니다.');
+      let stems = song.stems;
+      if (!stems) {
+        setSyncWork('베이스 분리 중 — 이 곡은 처음이라 몇 분 걸립니다');
+        stems = await runSeparation(songId, song.audioBlob);
+      }
+      setSyncWork('원곡 듣는 중');
+      const analysis = await hearStems(songId, stems);
+      setSyncWork('악보와 맞추는 중');
+      // Let that paint: the warp itself runs here, on the main thread, for a moment.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return syncScore(score, analysis, { preferredTrack, settings: apiRef.current?.settings });
+    },
+    [runSeparation, hearStems, apiRef],
+  );
+
+  /**
+   * Put a sync on its song — unless the score it was made for has been replaced meanwhile (a
+   * transcription finishing, another file put in): anchors for one score on another are wrong
+   * everywhere.
+   */
+  const applySync = useCallback(
+    async (songId: string, sync: ScoreSync | null, scoreData: PracticeDoc['scoreData']) => {
+      if (!sync) {
+        setSyncError('악보에 맞출 베이스 음표가 없습니다.');
+        return;
+      }
+      if (docRef.current.id === songId && docRef.current.scoreData !== scoreData) {
+        setSyncError('맞추는 사이에 악보가 바뀌어서 이번 결과는 버렸습니다. 다시 눌러 주세요.');
+        return;
+      }
+      await applyToSong(songId, { syncAnchors: sync.anchors });
+      setAutoSync(summariseSync(songId, sync));
+    },
+    [applyToSong],
+  );
+
+  /** "원곡에 자동으로 맞추기": the score on screen, to the song's recording. */
+  const onAutoSync = useCallback(async () => {
+    const song = docRef.current;
+    if (!song.audioBlob || syncWork) return;
+    if (
+      song.syncAnchors.length > 0 &&
+      !window.confirm(`지금 있는 앵커 ${song.syncAnchors.length}개를 자동 싱크 결과로 바꿉니다. 계속할까요?`)
+    ) {
+      return;
+    }
+    setSyncError(null);
+    setAutoSync(null);
+    try {
+      const score = readScore(song.scoreKind, song.scoreData, apiRef.current?.settings);
+      await applySync(song.id, await lineUp(song.id, score, song.trackIndex), song.scoreData);
+    } catch (e) {
+      setSyncError(`자동 싱크 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSyncWork(null);
+    }
+  }, [syncWork, lineUp, applySync, apiRef]);
+
+  /**
+   * "이 곡에 기존 악보 넣기": a tab file for the song that is open. Its recording and stems
+   * stay; the tab replaces the score, opens on its bass track, and is synced to the recording
+   * straight away. The way to a right tab when one exists — far more reliable than
+   * transcribing, since only where the bars fall has to be found, not the notes.
+   */
+  const onInsertScore = useCallback(
+    async (file: File) => {
+      const song = docRef.current;
+      if (syncWork) return;
+      if (
+        song.scoreKind === 'gp' &&
+        !window.confirm(`지금 악보(${song.scoreFileName ?? '불러온 파일'})를 "${file.name}"(으)로 바꿉니다. 계속할까요?`)
+      ) {
+        return;
+      }
+      setSyncError(null);
+      setAutoSync(null);
+      const data = await file.arrayBuffer();
+      let score: ReturnType<typeof readScore>;
+      try {
+        score = readScore('gp', data, apiRef.current?.settings);
+      } catch (e) {
+        setSyncError(`악보 파일을 읽지 못했습니다 (${e instanceof Error ? e.message : String(e)}).`);
+        return;
+      }
+      const trackIndex = bassTrackOf(score, 0);
+      // In at once, without the old anchors (they were for the old score); the sync follows.
+      await applyToSong(song.id, { scoreKind: 'gp', scoreData: data, scoreFileName: file.name, trackIndex, syncAnchors: [] });
+      if (tabResult?.songId === song.id) setTabResult(null);
+      if (!song.audioBlob) return;
+      try {
+        await applySync(song.id, await lineUp(song.id, score, trackIndex), data);
+      } catch (e) {
+        setSyncError(`자동 싱크 실패: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setSyncWork(null);
+      }
+    },
+    [syncWork, tabResult, applyToSong, applySync, lineUp, apiRef],
   );
 
   const onSeparate = useCallback(async () => {
@@ -827,16 +967,24 @@ export default function App() {
 
   const onPickScore = useCallback(async (file: File) => {
     const buf = await file.arrayBuffer();
+    // Open on the bass track. A file that will not parse is alphaTab's to explain, on load.
+    let trackIndex = 0;
+    try {
+      trackIndex = bassTrackOf(readScore('gp', buf, apiRef.current?.settings), 0);
+    } catch {
+      trackIndex = 0;
+    }
     const fresh = newPracticeDoc({
       title: file.name.replace(/\.[^.]+$/, ''),
       scoreKind: 'gp',
       scoreData: buf,
       scoreFileName: file.name,
+      trackIndex,
     });
     setDoc(fresh);
     await saveSong(fresh);
     setLibrary(await listSongs());
-  }, []);
+  }, [apiRef]);
 
   const onOpenSong = useCallback(async (id: string) => {
     const target = await getSong(id).catch(() => undefined);
@@ -1056,6 +1204,14 @@ export default function App() {
           />
 
           <SyncPanel
+            autoSync={autoSync?.songId === doc.id ? autoSync : null}
+            syncWork={syncWork}
+            // A transcription finishing would replace the score being synced, and a second
+            // separation would race the first.
+            syncBlocked={pipelineBusy || sepBusy || tabBusy}
+            syncError={syncError}
+            onAutoSync={onAutoSync}
+            onInsertScore={onInsertScore}
             anchors={doc.syncAnchors}
             currentTick={state.position.currentTick}
             currentBarIndex={state.currentBarIndex}
