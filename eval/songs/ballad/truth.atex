@@ -1,0 +1,44 @@
+// Ballad: whole and half notes, ties across bar lines, slow tempo (68 BPM).
+// Original material written for evaluation (no copyright issue). The guitar and drum tracks
+// are not part of the truth; they give the beat tracker a band to listen to.
+\title "Slow Ballad"
+\tempo 68
+.
+\track "Bass"
+\instrument 33
+\staff{tabs} \tuning (G2 D2 A1 E1)
+\ts (4 4) :1 r |
+:1 3.3 |
+:2 0.3 :2 3.4 |
+:2 1.4 :4 -.4 :4 1.4 |
+:1 3.4 |
+:2 3.3 :4 2.2 :4 3.3 |
+:1 0.3 |
+:1 -.3 |
+:2 1.4 :2 3.4 |
+:1 3.3 |
+\track "Guitar"
+\instrument 25
+\ts (4 4) :2 (3.5 2.4 0.3 1.2) (3.5 2.4 0.3 1.2) |
+:2 (3.5 2.4 0.3 1.2) (3.5 2.4 0.3 1.2) |
+:2 (0.5 2.4 2.3 1.2) (0.5 2.4 2.3 1.2) |
+:2 (3.4 2.3 1.2 1.1) (3.4 2.3 1.2 1.1) |
+:2 (3.6 2.5 0.4 0.3) (3.6 2.5 0.4 0.3) |
+:2 (3.5 2.4 0.3 1.2) (3.5 2.4 0.3 1.2) |
+:2 (0.5 2.4 2.3 1.2) (0.5 2.4 2.3 1.2) |
+:2 (0.5 2.4 2.3 1.2) (0.5 2.4 2.3 1.2) |
+:2 (3.4 2.3 1.2 1.1) (3.4 2.3 1.2 1.1) |
+:2 (3.5 2.4 0.3 1.2) (3.5 2.4 0.3 1.2) |
+\track "Drums"
+\instrument percussion
+\articulation defaults
+\ts (4 4) :4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |
+:4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |
+:4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |
+:4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |
+:4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |
+:4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |
+:4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |
+:4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |
+:4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |
+:4 (KickHit HiHatClosed) (SnareHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) |

@@ -1,0 +1,90 @@
+// Punk: eighth-note root line on the E and A strings, open strings between position shifts,
+// a swung triplet pickup into bar 8, repeated notes, and the bass entering after six bars of
+// band. Original material written for evaluation (no copyright issue). The guitar and drum
+// tracks are not part of the truth; they give the beat tracker a band to listen to.
+\title "Punk Eighths"
+\tempo 152
+.
+\track "Bass"
+\instrument 33
+\staff{tabs} \tuning (G2 D2 A1 E1)
+:1 r |
+:1 r |
+:1 r |
+:1 r |
+:1 r |
+:1 r |
+:2 r :4 r :4 7.3{tu 3} :8 7.3{tu 3} |
+:4 7.3 :8 7.3 0.3 :4 3.3 :8 3.3 0.3 |
+:8 3.4 3.4 0.4 5.3 5.3 5.3 5.3 0.3 |
+:4 7.3 :8 7.3 0.3 :4 3.3 :8 3.3 0.3 |
+:8 3.4 3.4 0.4 5.3 5.3 5.3 5.3 0.3 |
+:4 7.3 :8 7.3 0.3 :4 3.3 :8 3.3 0.3 |
+:8 3.4 3.4 0.4 5.3 5.3 5.3 5.3 0.3 |
+:8 2.3 2.3 2.3 2.3 2.3 2.3 2.3 2.3 |
+:8 2.3 2.3 2.3 2.3 2.3 2.3 2.3 2.3 |
+:4 7.3 :8 7.3 0.3 :4 3.3 :8 3.3 0.3 |
+:8 3.4 3.4 0.4 5.3 5.3 5.3 5.3 0.3 |
+:4 7.3 :8 7.3 0.3 :4 3.3 :8 3.3 0.3 |
+:8 3.4 3.4 0.4 5.3 5.3 5.3 5.3 0.3 |
+:4 7.3 :8 7.3 0.3 :4 3.3 :8 3.3 0.3 |
+:8 3.4 3.4 0.4 5.3 5.3 5.3 5.3 0.3 |
+:8 2.3 2.3 2.3 2.3 2.3 2.3 2.3 2.3 |
+:8 2.3 2.3 2.3 2.3 2.3 2.3 2.3 2.3 |
+:4 7.3 :8 7.3 0.3 :4 3.3 :8 3.3 0.3 |
+:8 3.4 3.4 0.4 5.3 5.3 5.3 5.3 0.3 |
+\track "Guitar"
+\instrument 30
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+:8 (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) |
+:8 (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+:8 (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) |
+:8 (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) (2.5 4.4 4.3) |
+:8 (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (0.6 2.5 2.4) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) (3.5 5.4 5.3) |
+:8 (3.6 5.5 5.4) (3.6 5.5 5.4) (3.6 5.5 5.4) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) (5.5 7.4 7.3) |
+\track "Drums"
+\instrument percussion
+\articulation defaults
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) (KickHit HiHatClosed) (SnareHit HiHatClosed) HiHatClosed |

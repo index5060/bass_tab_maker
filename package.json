@@ -24,7 +24,8 @@
     "test:wav": "node wavcheck.mjs",
     "test:youtube": "node youtubecheck.mjs",
     "sidecar": "node sidecar/run.mjs",
-    "replay": "node replay.mjs"
+    "replay": "node replay.mjs",
+    "eval": "vitest run --config vitest.eval.config.ts && node -e \"process.stdout.write(require('fs').readFileSync('eval/out/report.txt','utf8'))\""
   },
   "dependencies": {
     "@coderline/alphatab": "^1.8.4",

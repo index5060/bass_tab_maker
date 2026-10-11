@@ -1,0 +1,41 @@
+// Funk: sixteenth-note syncopation, rests, octave pops (E1-E2), repeated notes.
+// Original material written for evaluation (no copyright issue). The guitar and drum tracks
+// are not part of the truth; they give the beat tracker a band to listen to.
+\title "Funk Sixteenths"
+\tempo 96
+.
+\track "Bass"
+\instrument 33
+\staff{tabs} \tuning (G2 D2 A1 E1)
+\ts (4 4) :1 r |
+:8 0.4 :16 0.4 2.2 :8 r 3.4 :16 0.3 r :8 2.3 :16 5.3 r :8 2.2 |
+:16 0.4 r r 0.4 :8 3.4 0.3 :16 2.3 r 2.3 0.3 :8 3.4 :16 0.4 2.2 |
+:8 0.4 :16 0.4 2.2 :8 r 3.4 :16 0.3 r :8 2.3 :16 5.3 r :8 2.2 |
+:8 5.4 :16 5.4 7.3 :8 r 3.4 :4 0.3 :8 r :16 2.3 0.3 |
+:8 0.4 :16 0.4 2.2 :8 r 3.4 :16 0.3 r :8 2.3 :16 5.3 r :8 2.2 |
+:16 0.4 r r 0.4 :8 3.4 0.3 :16 2.3 r 2.3 0.3 :8 3.4 :16 0.4 2.2 |
+:8 0.4 :16 0.4 2.2 :8 r 3.4 :16 0.3 r :8 2.3 :16 5.3 r :8 2.2 |
+:4 0.4 :8 r :16 0.4 0.4 :8 2.2 r :16 3.4 r 0.3 2.3 |
+\track "Guitar"
+\instrument 30
+\ts (4 4) :4 r (0.6 2.5 0.4 0.3) r (0.6 2.5 0.4 0.3) |
+:4 r (0.6 2.5 0.4 0.3) r (0.6 2.5 0.4 0.3) |
+:4 r (0.6 2.5 0.4 0.3) r (0.6 2.5 0.4 0.3) |
+:4 r (0.6 2.5 0.4 0.3) r (0.6 2.5 0.4 0.3) |
+:4 r (0.6 2.5 0.4 0.3) r (0.6 2.5 0.4 0.3) |
+:4 r (0.6 2.5 0.4 0.3) r (0.6 2.5 0.4 0.3) |
+:4 r (0.6 2.5 0.4 0.3) r (0.6 2.5 0.4 0.3) |
+:4 r (0.6 2.5 0.4 0.3) r (0.6 2.5 0.4 0.3) |
+:4 r (0.6 2.5 0.4 0.3) r (0.6 2.5 0.4 0.3) |
+\track "Drums"
+\instrument percussion
+\articulation defaults
+\ts (4 4) :16 (KickHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed (KickHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed |
+:16 (KickHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed (KickHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed |
+:16 (KickHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed (KickHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed |
+:16 (KickHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed (KickHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed |
+:16 (KickHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed (KickHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed |
+:16 (KickHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed (KickHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed |
+:16 (KickHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed (KickHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed |
+:16 (KickHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed (KickHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed |
+:16 (KickHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed (KickHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed HiHatClosed (SnareHit HiHatClosed) HiHatClosed HiHatClosed HiHatClosed |

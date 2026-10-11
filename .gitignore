@@ -5,3 +5,6 @@ public/font
 public/soundfont
 __pycache__/
 public/models/basic-pitch
+eval/out/
+eval/scratch/
+eval/local/
