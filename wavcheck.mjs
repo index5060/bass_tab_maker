@@ -8,7 +8,7 @@
  * decodes in this browser.
  *
  * Then one 64-bit float WAV goes all the way to a tab (stub separator on the helper, the real
- * AI transcriber in the page), to show a converted file is as good as any other downstream.
+ * tab engine in the page), to show a converted file is as good as any other downstream.
  *
  *   node wavcheck.mjs
  */
@@ -166,7 +166,7 @@ try {
   };
   topBar.stored = await storedAudioWorks(page, topBar.title);
 
-  /* ----------------------- a 64-bit float WAV, all the way to a tab (AI in the page) */
+  /* ----------------------- a 64-bit float WAV, all the way to a tab */
   sidecar = spawn('python3', ['sidecar/server.py'], { cwd: ROOT, env: { ...process.env, PYTHONPATH: stubPath } });
   await waitForLine(sidecar, /사이드카|http:\/\//, 'sidecar');
   await page.locator('.start-panel .youtube-help summary').click();
@@ -200,7 +200,7 @@ try {
         };
       }),
   );
-  const frets = [...fullRun.tex.split('\n').filter((l) => /^[:r\d]/.test(l)).join(' ').matchAll(/\b(\d+)\.(\d)\b/g)].map((m) => `${m[1]}.${m[2]}`);
+  const frets = [...fullRun.tex.split('\n').filter((l) => l.trim().endsWith('|')).join(' ').matchAll(/\b(\d+)\.(\d)\b/g)].map((m) => `${m[1]}.${m[2]}`);
   await page.screenshot({ path: path.join(ROOT, 'wav.png') });
 
   report = { variants, topBar, fullRun: { steps: fullRun.steps, error: fullRun.error, frets }, pageErrors: pageErrors.slice(0, 3) };

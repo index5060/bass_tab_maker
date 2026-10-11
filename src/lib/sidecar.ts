@@ -24,8 +24,6 @@ export interface SidecarInfo {
   /** It answered AND demucs is importable there. */
   ready: boolean;
   demucs: string | null;
-  /** Version of basic-pitch when installed there — unlocks AI transcription of the stem. */
-  basicPitch: string | null;
   /** Version of yt-dlp when installed there — unlocks "YouTube link -> audio". */
   ytdlp: string | null;
   /**
@@ -75,7 +73,6 @@ export async function probeSidecar(
     reachable: false,
     ready: false,
     demucs: null,
-    basicPitch: null,
     ytdlp: null,
     ytdlpEjs: false,
     ffmpeg: null,
@@ -93,7 +90,6 @@ export async function probeSidecar(
       name?: string;
       demucs?: string | null;
       demucsInstalled?: boolean;
-      basicPitch?: string | null;
       ytdlp?: string | null;
       ytdlpEjs?: boolean;
       ffmpeg?: boolean;
@@ -107,7 +103,6 @@ export async function probeSidecar(
       reachable: true,
       ready: body.demucsInstalled === true,
       demucs: body.demucs ?? null,
-      basicPitch: body.basicPitch ?? null,
       ytdlp: body.ytdlp ?? null,
       ytdlpEjs: body.ytdlpEjs === true,
       ffmpeg: typeof body.ffmpeg === 'boolean' ? body.ffmpeg : null,
@@ -248,55 +243,6 @@ export class SidecarSeparator implements Separator {
       createdAt: Date.now(),
     };
   }
-}
-
-/* ----------------------------------------------------------- transcription */
-
-export interface SidecarNote {
-  midi: number;
-  startMs: number;
-  endMs: number;
-  confidence: number;
-}
-
-/**
- * Run basic-pitch on the sidecar and get note events back.
- *
- * This is the Songsterr-style "AI draft" path: a trained onset+pitch network instead of the
- * built-in autocorrelation detector. The browser keeps everything downstream — grid fitting,
- * quantisation, fretboard mapping — so only the ears changed, not the writing.
- */
-export async function transcribeViaSidecar(
-  source: Blob,
-  baseUrl: string = DEFAULT_SIDECAR_URL,
-  onMessage?: (message: string) => void,
-): Promise<SidecarNote[]> {
-  const submitted = await fetch(`${baseUrl}/transcribe?ext=${guessExtension(source)}`, {
-    method: 'POST',
-    body: source,
-    headers: { 'Content-Type': 'application/octet-stream' },
-  });
-  if (!submitted.ok) {
-    const detail = await submitted.json().catch(() => ({ error: `HTTP ${submitted.status}` }));
-    throw new Error(String(detail.error ?? `HTTP ${submitted.status}`));
-  }
-  const { id } = (await submitted.json()) as { id: string };
-
-  for (;;) {
-    await sleep(600);
-    const res = await fetch(`${baseUrl}/jobs/${id}`);
-    if (!res.ok) throw new Error(`작업 상태를 읽지 못했습니다 (HTTP ${res.status}).`);
-    const status = (await res.json()) as JobStatus;
-    if (status.state === 'error') throw new Error(status.error ?? 'AI 채보에 실패했습니다.');
-    onMessage?.(status.message || 'basic-pitch');
-    if (status.state === 'done') break;
-  }
-
-  const notesRes = await fetch(`${baseUrl}/jobs/${id}/notes`);
-  if (!notesRes.ok) throw new Error(`채보 결과를 받지 못했습니다 (HTTP ${notesRes.status}).`);
-  const body = (await notesRes.json()) as { notes: SidecarNote[] };
-  void fetch(`${baseUrl}/jobs/${id}`, { method: 'DELETE' }).catch(() => undefined);
-  return body.notes;
 }
 
 /* ----------------------------------------------------------------- youtube */

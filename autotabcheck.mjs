@@ -5,10 +5,12 @@
  * strings, one per beat at 120 BPM — and checks the generated tab actually says so.
  *
  * The audio doubles as its own "bass stem" through the import path, so this exercises the
- * whole chain (decode -> mono -> decimate -> YIN -> segment -> quantise -> fretboard ->
- * alphaTex -> alphaTab) without downloading a 172MB model.
+ * whole chain (stems -> worker -> beats -> notes on the beat grid -> bars -> frets ->
+ * alphaTex + sync anchors -> alphaTab) without downloading a 172MB model. The minus-bass stem
+ * comes out silent, so the beat is found on the bass itself — the fallback path.
  *
  *   node autotabcheck.mjs
+ *   PREVIEW=1 node autotabcheck.mjs     (against the production build)
  */
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
@@ -28,8 +30,8 @@ const LINE = [
 ];
 const NOTE_SECONDS = 0.5; // one beat at 120 BPM
 const REPEATS = 4;
-// Real songs do not start on a barline. The lead-in verifies that notes still land at their
-// correct ABSOLUTE positions (later slots), which is what keeps the 1:1 cursor sync honest.
+// Real songs do not start at 0:00. Bar 1 has to start where the music does, and the sync
+// anchors have to say so, or the recording plays 0.75s out of step with the tab.
 const LEAD_SECONDS = 0.75;
 
 /**
@@ -82,7 +84,9 @@ function writeBassLineWav(file, amplitude = 0.55) {
   fs.writeFileSync(file, buf);
 }
 
-const server = spawn('npx', ['vite', '--port', String(PORT)], { cwd: ROOT });
+// PREVIEW=1 runs it against the production build (npm run build first): the analysis worker
+// is bundled separately there, and a worker that only works in dev is a broken feature.
+const server = spawn('npx', process.env.PREVIEW ? ['vite', 'preview', '--port', String(PORT)] : ['vite', '--port', String(PORT)], { cwd: ROOT });
 await new Promise((resolve, reject) => {
   const t = setTimeout(() => reject(new Error('서버 타임아웃')), 90000);
   const onData = (b) => {
@@ -137,26 +141,41 @@ try {
     return { hint: hint ?? null };
   });
 
-  const tex = await page.evaluate(
-    () =>
-      new Promise((resolve) => {
-        const req = indexedDB.open('bass-practice');
-        req.onsuccess = () => {
-          const db = req.result;
-          const all = db.transaction('songs').objectStore('songs').getAll();
-          all.onsuccess = () => resolve(all.result[0]?.scoreData ?? null);
-          all.onerror = () => resolve(null);
-        };
-        req.onerror = () => resolve(null);
-      }),
-  );
+  const readSong = () =>
+    page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const req = indexedDB.open('bass-practice');
+          req.onsuccess = () => {
+            const db = req.result;
+            const all = db.transaction('songs').objectStore('songs').getAll();
+            all.onsuccess = () => {
+              const song = all.result.find((s) => s.title === '.autotab-test') ?? all.result[0];
+              resolve({ tex: song?.scoreData ?? null, anchors: song?.syncAnchors ?? [] });
+            };
+            all.onerror = () => resolve({ tex: null, anchors: [] });
+          };
+          req.onerror = () => resolve({ tex: null, anchors: [] });
+        }),
+    );
+  const saved = await readSong();
+  const tex = saved.tex;
 
-  // Halving the tempo must rewrite the same notes at half speed without re-detecting anything.
-  // It reads the notes back out of the last result, so a regression here shows up as the
-  // score not changing at all, or as the note count collapsing.
+  // "Bar 1 starts a beat later" re-lays the same notes out instantly: the score must change
+  // and the first bar line's anchor must move one beat (0.5s) into the recording.
+  await page.locator('.stem-panel button', { hasText: '한 박 뒤로' }).click();
+  await page.waitForTimeout(1500);
+  const shifted = await readSong();
+  await page.locator('.stem-panel button', { hasText: '한 박 앞으로' }).click();
+  await page.waitForTimeout(1500);
+
+  // Halving the tempo listens again with the beat period pinned, so the same notes come out
+  // at half the tempo, and the BPM field keeps the choice for the next run.
   const bpmBefore = Number(/([\d.]+) BPM/.exec(summary.hint ?? '')?.[1] ?? 0);
   await page.locator('.stem-panel button', { hasText: '템포 ÷2' }).click();
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(1000);
+  await page.waitForFunction(() => !document.querySelector('.stem-panel .phase-line'), undefined, { timeout: 120000 });
+  await page.waitForTimeout(1000);
   const afterHalving = await page.evaluate(() => {
     const hint = [...document.querySelectorAll('.stem-panel .hint')]
       .map((p) => p.textContent?.trim())
@@ -181,9 +200,11 @@ try {
     fretCounts: counts,
     firstEight: frets.slice(0, 8),
     barCount: tex ? tex.split('\n').filter((l) => l.trim().endsWith('|')).length : 0,
-    firstBarHasRest: tex
-      ? /\br\b/.test(tex.split('\n').find((l) => l.trim().endsWith('|')) ?? '')
-      : false,
+    firstBar: tex ? (tex.split('\n').find((l) => l.trim().endsWith('|')) ?? '') : '',
+    anchors: saved.anchors.length,
+    firstAnchorMs: saved.anchors[0]?.audioMs ?? null,
+    shiftedFirstAnchorMs: shifted.anchors[0]?.audioMs ?? null,
+    shiftChangedScore: shifted.tex !== null && shifted.tex !== tex,
     tempoRescale: { bpmBefore, bpmAfter, bpmField: afterHalving.bpmField },
     errors: errors.slice(0, 3),
   };
@@ -206,13 +227,18 @@ const checks = {
   // At 120 BPM a 4/4 bar lasts 2s, and the line is 4 notes x 0.5s x 4 repeats = 8s.
   scoreCoversAudio:
     report.barCount >= (LEAD_SECONDS + LINE.length * NOTE_SECONDS * REPEATS) / 2,
-  // The lead-in must surface as rests at the top of bar 1 — notes shifted to their true
-  // absolute slots — or the tab starts before the recording does and the cursor lies.
-  leadInBecomesRests: report.firstBarHasRest === true,
+  // Bar 1 starts with the first note, not with the silence before it...
+  barOneStartsWithTheMusic: /^\\ts \(4 4\) :4 0\.4/.test(report.firstBar ?? ''),
+  // ...and its anchor says where that is in the recording: 0.75s in.
+  barOneAnchoredAtTheLeadIn:
+    report.anchors >= 2 && Math.abs((report.firstAnchorMs ?? 0) - LEAD_SECONDS * 1000) < 40,
+  // Moving the bar line a beat later rewrites the tab and moves the anchor 0.5s.
+  barShiftWorks:
+    report.shiftChangedScore === true &&
+    Math.abs((report.shiftedFirstAnchorMs ?? 0) - (report.firstAnchorMs ?? 0) - NOTE_SECONDS * 1000) < 40,
 
-  // Half and double are the same grid, so the onsets can never choose between them. The user
-  // can, in one click, and it must actually take effect and pin the BPM field so the next run
-  // keeps the choice.
+  // Which tempo level is "the" beat is partly a notation choice, so it is one click for the
+  // user: it must take effect, and pin the BPM field so the next run keeps the choice.
   halvingTempoWorks:
     rescale.bpmBefore > 0 && Math.abs(rescale.bpmAfter - rescale.bpmBefore / 2) < 1,
   halvingPinsTheBpmField: Number(rescale.bpmField) > 0,

@@ -12,14 +12,8 @@ import {
 } from './lib/separator';
 import { normalizeAnchors, isUsable, tickToAudioMs } from './lib/syncmap';
 import { BLANK_ALPHATEX, DEMO_ALPHATEX, DEMO_DOC_ID, blankAlphaTex, isBlankScore } from './lib/demoScore';
-import {
-  transcribeBassStem,
-  transcribeBassStemAI,
-  notesToAutoTab,
-  type AutoTabProgress,
-  type AutoTabResult,
-  type AutoTabSummary,
-} from './lib/autoTab';
+import { analyseStems, summariseTab, type TabProgress, type TabSummary } from './lib/tab/client';
+import { writeTabFrom, type TabAnalysis, type TabResult } from './lib/tab';
 import {
   newPracticeDoc,
   type PracticeDoc,
@@ -45,7 +39,6 @@ import { encodeSongFile, decodeSongFile, songFileName } from './lib/songFile';
 import { AUDIO_FILE_ACCEPT, prepareAudioFile } from './lib/audioImport';
 import {
   probeSidecar,
-  transcribeViaSidecar,
   downloadFromYouTube,
   fileSafe,
   SidecarSeparator,
@@ -109,12 +102,16 @@ export default function App() {
   const [sepProgress, setSepProgress] = useState<SeparationProgress>(IDLE_PROGRESS);
   const [sepError, setSepError] = useState<string | null>(null);
   const [tabBusy, setTabBusy] = useState(false);
-  const [tabProgress, setTabProgress] = useState<AutoTabProgress | null>(null);
-  const [tabResult, setTabResult] = useState<AutoTabSummary | null>(null);
-  /** Empty = estimate the tempo; a number pins the grid to it (phase is still fitted). */
+  const [tabProgress, setTabProgress] = useState<TabProgress | null>(null);
+  const [tabResult, setTabResult] = useState<TabSummary | null>(null);
+  /** Empty = find the tempo; a number pins the beat period to it (the beats are still tracked). */
   const [tabBpm, setTabBpm] = useState('');
-  /** Full last transcription result, kept for the diagnostic export. */
-  const tabDiagRef = useRef<AutoTabResult | null>(null);
+  /**
+   * What the last analysis heard, for the song it was run on: re-laying out the bars
+   * (bar 1 a beat later, 3/4 instead of 4/4) reuses it instead of listening again, and the
+   * diagnostic export saves it.
+   */
+  const analysisRef = useRef<{ songId: string; analysis: TabAnalysis } | null>(null);
   /** The link -> audio -> stem -> tab run, while it is going and after it ends. */
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [autoPipeline, setAutoPipeline] = useState(true);
@@ -546,63 +543,35 @@ export default function App() {
   );
 
   /**
-   * Read a tab off an isolated bass stem and write it into the song's score.
+   * Read a tab off a song's stems and write it into its score.
    *
-   * Only ever runs on the separated stem — YIN assumes one note at a time, so pointed at a
-   * full mix it returns noise. `bpm` is passed in rather than read from state so a run that
-   * started from one song can never pick up a tempo typed for another.
+   * The bass stem is what is transcribed, the minus-bass stem is where the beat comes from.
+   * Along with the tab come sync anchors — the recording's time of every bar line — so the
+   * original follows the tab bar by bar, even where the band drifted. They replace whatever
+   * anchors the song had: those were made for the score this replaces. `bpm` is passed in
+   * rather than read from state so a run started for one song never picks up a tempo typed
+   * for another.
    */
   const runTranscription = useCallback(
-    async (songId: string, stems: StemSet, title: string, bpm?: number): Promise<AutoTabResult> => {
+    async (songId: string, stems: StemSet, title: string, bpm?: number): Promise<TabResult> => {
       setTabBusy(true);
+      setTabProgress(null);
       try {
-        // Prefer the trained model on the sidecar when it is there — a learned onset+pitch
-        // network is a different class of accuracy from the built-in autocorrelation, and it
-        // is the same family of tech behind tab sites' "AI draft" features. Everything after
-        // "we have notes" is shared with the local path (notesToAutoTab).
-        let result: AutoTabResult;
-        let fallbackReason: string | undefined;
-        if (sidecar?.reachable && sidecar.basicPitch && useSidecar) {
-          setTabProgress({ phase: 'analysing', progress: 0.3, message: 'basic-pitch (사이드카)' });
-          const raw = await transcribeViaSidecar(stems.bass, undefined, (message) =>
-            setTabProgress({ phase: 'analysing', progress: 0.6, message }),
-          );
-          setTabProgress({ phase: 'transcribing', progress: 0.85, message: '탭으로 정리하는 중' });
-          result = notesToAutoTab({
-            notes: raw,
-            durationMs: stems.durationMs,
-            title,
-            bpm,
-            engine: 'basic-pitch',
-          });
-        } else {
-          // The same model, in the page — this is what makes AI transcription work with
-          // nothing installed. If it cannot run here, the built-in detector still gives a tab.
-          try {
-            result = await transcribeBassStemAI(stems.bass, { title, bpm, onProgress: setTabProgress });
-          } catch (e) {
-            fallbackReason = e instanceof Error ? e.message : String(e);
-            result = await transcribeBassStem(stems.bass, { title, bpm, onProgress: setTabProgress });
-          }
-        }
-        await applyToSong(songId, { scoreKind: 'alphatex', scoreData: result.alphaTex });
-        if (docRef.current.id === songId) {
-          tabDiagRef.current = result;
-          setTabResult({
-            notes: result.noteCount,
-            bpm: result.bpm,
-            engine: result.engine,
-            confidence: result.meanConfidence,
-            stats: result.stats,
-            fallbackReason,
-          });
-        }
-        return result;
+        const analysis = await analyseStems(stems, { bpm, onProgress: setTabProgress });
+        const tab = writeTabFrom(analysis, { title });
+        await applyToSong(songId, {
+          scoreKind: 'alphatex',
+          scoreData: tab.alphaTex,
+          syncAnchors: toSyncAnchors(tab),
+        });
+        analysisRef.current = { songId, analysis };
+        if (docRef.current.id === songId) setTabResult(summariseTab(songId, analysis, tab, bpm));
+        return tab;
       } finally {
         setTabBusy(false);
       }
     },
-    [sidecar, useSidecar, applyToSong],
+    [applyToSong],
   );
 
   const onSeparate = useCallback(async () => {
@@ -678,7 +647,7 @@ export default function App() {
         setSource('original');
         setTabBpm('');
         setTabResult(null);
-        tabDiagRef.current = null;
+        analysisRef.current = null;
         setSepError(null);
         setSepProgress(IDLE_PROGRESS);
 
@@ -743,78 +712,73 @@ export default function App() {
   );
 
   /**
-   * Rewrite the last transcription at half or double the tempo.
+   * Listen again at half or double the tempo.
    *
-   * Halving and doubling describe the *same* grid — the onsets cannot say which is right,
-   * because both are. Whether 200ms gaps are eighths at 146 or sixteenths at 73 is a notation
-   * choice, and the person who knows the song settles it in one click. The search picks the
-   * reading a musician would more often write; this is the escape hatch when it picked wrong.
-   *
-   * Costs milliseconds because it reuses the notes already detected. Re-running the detector
-   * would mean minutes and would find exactly the same notes.
+   * Which level of the beat is "the" beat — eighths at 146 or quarters at 73 — is partly a
+   * notation choice, and the analysis can pick the one a musician would not. One click
+   * settles it: the beats are tracked again with the period pinned, so the notes land on the
+   * grid that tempo implies rather than being squeezed onto the old one.
    */
   const onRescaleTempo = useCallback(
-    (factor: number) => {
-      const previous = tabDiagRef.current;
-      if (!previous) return;
-      const result = notesToAutoTab({
-        notes: previous.detectedNotes.map((n) => ({
-          midi: n.midi,
-          startMs: n.startMs,
-          endMs: n.endMs,
-          confidence: n.confidence,
-        })),
-        durationMs: previous.durationMs,
-        title: doc.title,
-        bpm: previous.bpm * factor,
-        engine: previous.engine,
-      });
-      setDoc((d) => ({
-        ...d,
-        scoreKind: 'alphatex',
-        scoreData: result.alphaTex,
-        updatedAt: Date.now(),
-      }));
-      tabDiagRef.current = result;
-      setTabBpm(String(Math.round(result.bpm)));
-      setTabResult({
-        notes: result.noteCount,
-        bpm: result.bpm,
-        engine: result.engine,
-        confidence: result.meanConfidence,
-        stats: result.stats,
-      });
+    async (factor: number) => {
+      const held = analysisRef.current;
+      const stems = doc.stems;
+      if (!held || held.songId !== doc.id || !stems) return;
+      const bpm = Math.round(held.analysis.bpm * factor * 10) / 10;
+      setTabBpm(String(Math.round(bpm)));
+      setSepError(null);
+      try {
+        await runTranscription(doc.id, stems, doc.title, bpm);
+      } catch (e) {
+        setSepError(`채보 실패: ${e instanceof Error ? e.message : String(e)}`);
+      }
     },
-    [doc.title],
+    [doc.id, doc.stems, doc.title, runTranscription],
   );
 
   /**
-   * Download everything the last transcription actually heard, as JSON.
-   *
-   * Debugging a transcription by looking at the rendered tab is guesswork — was the pitch
-   * wrong, the octave, the timing, or just the layout? This file answers that: every kept
-   * note with its time and confidence, plus the grid fit and the gate statistics.
+   * Lay the same notes out in different bars: bar 1 a beat earlier or later, or in 3 instead
+   * of 4. Where "one" is, the analysis decides from the drums and the bass, and when it is
+   * wrong the whole tab reads off by a beat — this is the one-click fix, and instant, because
+   * nothing is listened to again.
+   */
+  const onRelayout = useCallback(
+    (change: { shiftBeats?: number; beatsPerBar?: number }) => {
+      const held = analysisRef.current;
+      if (!held || held.songId !== doc.id || tabResult?.songId !== held.songId) return;
+      const beatsPerBar = change.beatsPerBar ?? tabResult.beatsPerBar;
+      const tab = writeTabFrom(held.analysis, {
+        title: doc.title,
+        beatsPerBar,
+        downbeatPhase: change.beatsPerBar ? undefined : tabResult.downbeatPhase + (change.shiftBeats ?? 0),
+      });
+      setDoc((d) =>
+        d.id === held.songId
+          ? { ...d, scoreKind: 'alphatex', scoreData: tab.alphaTex, syncAnchors: toSyncAnchors(tab), updatedAt: Date.now() }
+          : d,
+      );
+      setTabResult(summariseTab(held.songId, held.analysis, tab, tabResult.pinnedBpm));
+    },
+    [doc.id, doc.title, tabResult],
+  );
+
+  /**
+   * Download what the last analysis heard, as JSON: every beat, every note on the grid, and
+   * the evidence each decision was made on (tempo octaves weighed, bar readings scored).
+   * A wrong tab is otherwise guesswork — was it the beat, the bar line, or the notes?
    */
   const onExportTabDiagnostics = useCallback(() => {
-    const result = tabDiagRef.current;
-    if (!result) return;
+    const held = analysisRef.current;
+    if (!held || held.songId !== doc.id) return;
     const payload = {
       title: doc.title,
       generatedAt: new Date().toISOString(),
-      // Which detector heard these. Without it a diagnostic file cannot be read back with
-      // any confidence — the two engines want different handling downstream, and guessing
-      // from the frame count is exactly the guesswork this file exists to end.
-      engine: result.engine,
-      bpm: result.bpm,
-      noteCount: result.noteCount,
-      meanConfidence: result.meanConfidence,
-      durationMs: result.durationMs,
-      stats: result.stats,
-      detectedNotes: result.detectedNotes,
+      layout: tabResult && { beatsPerBar: tabResult.beatsPerBar, downbeatPhase: tabResult.downbeatPhase },
+      ...held.analysis,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    downloadBlob(blob, `${doc.title.replace(/[\\/:*?"<>|]/g, '_')}-채보진단.json`);
-  }, [doc.title]);
+    downloadBlob(blob, `${fileSafe(doc.title) || 'song'}-채보진단.json`);
+  }, [doc.id, doc.title, tabResult]);
 
   /* -------------------------------------------- each step's result as a file */
 
@@ -1069,12 +1033,13 @@ export default function App() {
             onSeparate={onSeparate}
             tabBusy={tabBusy}
             tabProgress={tabProgress}
-            tabResult={tabResult}
+            tabResult={tabResult?.songId === doc.id ? tabResult : null}
             onTranscribe={onTranscribe}
             tabBpm={tabBpm}
             onTabBpm={setTabBpm}
             onExportDiagnostics={onExportTabDiagnostics}
             onRescaleTempo={onRescaleTempo}
+            onRelayout={onRelayout}
             sidecar={sidecar}
             sidecarSettings={sidecarSettings}
             useSidecar={useSidecar}
@@ -1228,6 +1193,11 @@ function downloadBlob(blob: Blob, fileName: string): void {
   a.click();
   // Revoke late: revoking immediately can cancel the download in some browsers.
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/** The tab's bar lines as sync anchors: where each bar starts in the recording. */
+function toSyncAnchors(tab: TabResult): SyncAnchor[] {
+  return tab.anchors.map((a) => ({ synthTick: a.tick, audioMs: a.audioMs, barIndex: a.barIndex }));
 }
 
 function fmtBytes(n: number): string {

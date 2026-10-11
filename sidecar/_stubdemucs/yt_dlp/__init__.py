@@ -1,13 +1,13 @@
 """
-Stand-in for yt-dlp, protocol testing only — same idea as the demucs and basic-pitch stubs.
+Stand-in for yt-dlp, protocol testing only — same idea as the demucs stub.
 
 Real yt-dlp needs the network and a live YouTube, neither of which a test can count on. This
 answers the same Python API: it calls the progress hooks and the match filter the way yt-dlp
 does, writes an audio file where `outtmpl` says, and returns an info dict in the real shape —
 so the sidecar's /youtube route, the polling and the browser plumbing all get exercised.
 
-The "audio" is a few seconds of A1 (55Hz) as WAV, which the demucs and basic-pitch stubs can
-both read, so a whole link -> stem -> tab run works end to end.
+The "audio" is a few seconds of A1 (55Hz) plucked on every beat at 120 BPM, as WAV, which the
+demucs stub can read, so a whole link -> stem -> tab run works end to end.
 
 Two video ids behave specially, to exercise the failure paths:
   LiveStream0  -> reported as a live stream (the sidecar's filter must refuse it)
@@ -79,10 +79,19 @@ class YoutubeDL:
 
 
 def _write_tone(path: Path, seconds: int, hz: float = 55.0) -> None:
+    """A1 plucked on every beat at 120 BPM: decaying notes with a short gap between them."""
     sr = 44100
+    per = sr // 2
     frames = bytearray()
     for i in range(sr * seconds):
-        v = int(math.sin(2 * math.pi * hz * i / sr) * 8000)
+        t = (i % per) / sr
+        envelope = math.exp(-3 * t) if i % per < per * 0.9 else 0.0
+        wave_ = (
+            math.sin(2 * math.pi * hz * t)
+            + 0.4 * math.sin(4 * math.pi * hz * t)
+            + 0.2 * math.sin(6 * math.pi * hz * t)
+        )
+        v = int(envelope * wave_ * 8000)
         frames += struct.pack("<hh", v, v)
     path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(path), "wb") as w:

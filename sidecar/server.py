@@ -18,7 +18,6 @@ Dependencies: the Python standard library, plus whichever of these you want swit
 Each one is optional and independent; the app falls back for any that are missing.
 
     pip install demucs                  # separation
-    pip install basic-pitch             # AI transcription
     pip install -U "yt-dlp[default]"    # YouTube link -> audio
     python sidecar/server.py
 
@@ -105,8 +104,6 @@ class Job:
     no_bass_path: Path | None = None
     created_at: float = field(default_factory=time.time)
     log_tail: list[str] = field(default_factory=list)
-    # Transcription jobs put their result here instead of writing stem files.
-    notes: list | None = None
     # YouTube jobs: the downloaded audio file and what the video says about itself.
     audio_path: Path | None = None
     meta: dict | None = None
@@ -134,23 +131,6 @@ def demucs_version() -> str | None:
         import demucs  # noqa: F401
 
         return getattr(demucs, "__version__", "unknown")
-    except Exception:
-        return None
-
-
-def basic_pitch_version() -> str | None:
-    """
-    Spotify's basic-pitch, used for AI transcription of the separated bass stem.
-
-    This replaces the hand-rolled YIN pipeline as the primary transcriber when available:
-    a trained onset+pitch network is simply a different class of accuracy from classical
-    autocorrelation, and it is the same family of tech behind "AI draft" features on tab
-    sites. Optional — the browser falls back to the built-in detector without it.
-    """
-    try:
-        import basic_pitch  # noqa: F401
-
-        return getattr(basic_pitch, "__version__", "unknown")
     except Exception:
         return None
 
@@ -274,57 +254,6 @@ def run_separation(job: Job, audio_path: Path, model: str, shifts: int, overlap:
     job.bass_path = produced[0]
     no_bass = produced[0].parent / "no_bass.wav"
     job.no_bass_path = no_bass if no_bass.exists() else None
-    job.progress = 1.0
-    job.state = "done"
-    job.message = "완료"
-
-
-def run_transcription(job: Job, audio_path: Path) -> None:
-    """
-    Audio in, note events out, via basic-pitch.
-
-    The frequency window is pinned to the bass register (30-500Hz): the input is an
-    already-separated bass stem, so anything the model hears outside that range is bleed or
-    a harmonic, and filtering here is cheaper and cleaner than filtering after the fact.
-    """
-    job.state = "running"
-    job.message = "basic-pitch 실행 중"
-
-    try:
-        from basic_pitch.inference import predict
-    except Exception:
-        job.state = "error"
-        job.error = "basic-pitch가 설치되어 있지 않습니다. 'pip install basic-pitch'."
-        return
-
-    try:
-        try:
-            _, _, note_events = predict(
-                str(audio_path), minimum_frequency=30.0, maximum_frequency=500.0
-            )
-        except TypeError:
-            # Older releases lack the frequency-window keywords.
-            _, _, note_events = predict(str(audio_path))
-    except Exception as exc:  # noqa: BLE001
-        job.state = "error"
-        job.error = f"basic-pitch 실패: {exc}"
-        return
-
-    notes = []
-    for event in note_events:
-        # (start_s, end_s, midi_pitch, amplitude, pitch_bends)
-        start_s, end_s, pitch, amplitude = event[0], event[1], event[2], event[3]
-        notes.append(
-            {
-                "startMs": round(float(start_s) * 1000),
-                "endMs": round(float(end_s) * 1000),
-                "midi": int(pitch),
-                "confidence": round(float(amplitude), 3),
-            }
-        )
-    notes.sort(key=lambda n: n["startMs"])
-
-    job.notes = notes
     job.progress = 1.0
     job.state = "done"
     job.message = "완료"
@@ -585,7 +514,6 @@ class Handler(BaseHTTPRequestHandler):
             for k, v in [
                 ("상태", "준비됨" if ready else "demucs 없음"),
                 ("demucs (분리)", version or "설치되지 않음"),
-                ("basic-pitch (AI 채보)", basic_pitch_version() or "설치되지 않음"),
                 ("yt-dlp (YouTube)", ytdlp or "설치되지 않음"),
                 ("ffmpeg", "있음" if ffmpeg_available() else "없음"),
                 ("장치", device),
@@ -662,7 +590,6 @@ class Handler(BaseHTTPRequestHandler):
                     "version": 1,
                     "demucs": version,
                     "demucsInstalled": version is not None,
-                    "basicPitch": basic_pitch_version(),
                     "ytdlp": ytdlp_version(),
                     "ytdlpEjs": ytdlp_has_ejs(),
                     "ffmpeg": ffmpeg_available(),
@@ -698,13 +625,6 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"error": "아직 준비되지 않았습니다."}, 409)
                     return
                 self._file(job.audio_path, (job.meta or {}).get("contentType", "application/octet-stream"))
-                return
-
-            if len(parts) == 3 and parts[2] == "notes":
-                if job.state != "done" or job.notes is None:
-                    self._json({"error": "아직 준비되지 않았습니다."}, 409)
-                    return
-                self._json({"notes": job.notes})
                 return
 
             if len(parts) == 3 and parts[2] in ("bass", "no_bass"):
@@ -751,7 +671,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         route = [p for p in parsed.path.split("/") if p]
-        if route not in (["separate"], ["transcribe"], ["youtube"]):
+        if route not in (["separate"], ["youtube"]):
             self._json({"error": "not found"}, 404)
             return
         if not self._origin_allowed():
@@ -760,16 +680,7 @@ class Handler(BaseHTTPRequestHandler):
         if route == ["youtube"]:
             self._start_youtube()
             return
-        transcribing = route == ["transcribe"]
-
-        if transcribing:
-            if basic_pitch_version() is None:
-                self._json(
-                    {"error": "basic-pitch가 설치되어 있지 않습니다. 'pip install basic-pitch'."},
-                    503,
-                )
-                return
-        elif demucs_version() is None:
+        if demucs_version() is None:
             self._json({"error": "demucs가 설치되어 있지 않습니다. 'pip install demucs'."}, 503)
             return
 
@@ -783,10 +694,9 @@ class Handler(BaseHTTPRequestHandler):
 
         query = parse_qs(parsed.query)
         model = (query.get("model") or ["htdemucs_ft"])[0]
-        if not transcribing:
-            if model not in KNOWN_MODELS:
-                self._json({"error": f"알 수 없는 모델: {model}"}, 400)
-                return
+        if model not in KNOWN_MODELS:
+            self._json({"error": f"알 수 없는 모델: {model}"}, 400)
+            return
         try:
             shifts = max(0, min(10, int((query.get("shifts") or ["1"])[0])))
             overlap = max(0.0, min(0.9, float((query.get("overlap") or ["0.25"])[0])))
@@ -807,11 +717,6 @@ class Handler(BaseHTTPRequestHandler):
 
         with JOBS_LOCK:
             JOBS[job.id] = job
-
-        if transcribing:
-            threading.Thread(target=run_transcription, args=(job, audio_path), daemon=True).start()
-            self._json({"id": job.id, "engine": "basic-pitch"})
-            return
 
         threading.Thread(
             target=run_separation,
@@ -840,12 +745,7 @@ def main() -> None:
     version = demucs_version()
     print(f"Bass Practice 사이드카  http://{HOST}:{PORT}")
     if version:
-        # Name both capabilities on one line. With several Pythons installed it is very easy
-        # to pip-install into the interpreter the launcher did NOT pick, and then wonder why
-        # the app still says YIN. This line is the answer to that question.
-        pitch = basic_pitch_version()
-        pitch_note = f"basic-pitch {pitch}" if pitch else "basic-pitch 없음 (채보는 YIN)"
-        print(f"  demucs {version} · {pitch_note} · 장치 {torch_device()}")
+        print(f"  demucs {version} · 장치 {torch_device()}")
     else:
         print("  demucs가 아직 없습니다 — 'pip install demucs' 후 다시 실행하세요.")
     ytdlp = ytdlp_version()

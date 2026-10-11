@@ -3,6 +3,7 @@
  * transcribe it with each pipeline, and score the result against the truth.
  *
  *   npm run eval
+ *   SHOW=punk npm run eval     (every bar of one song, not just the first 12 of failing ones)
  */
 import { it } from 'vitest';
 import fs from 'node:fs';
@@ -12,7 +13,7 @@ import { renderTex } from './lib/render.mjs';
 // @ts-expect-error — plain .mjs helpers shared with the Node scripts
 import { scoreTab, barDiff } from './lib/score.mjs';
 import { CONDITIONS } from './conditions';
-import { oldPipeline, newPipeline, type PipelineInput } from './pipelines';
+import { tabPipeline, type PipelineInput } from './pipelines';
 
 // eval/songs holds original test songs. eval/local (not committed) can hold more, e.g. a
 // transcription of a real song read off a published tab, for checking against at home.
@@ -23,10 +24,7 @@ const SONGS = SONG_DIRS.flatMap((dir) => fs.readdirSync(dir).map((song) => ({ so
   .filter(({ file }) => fs.existsSync(file))
   .sort((a, b) => a.song.localeCompare(b.song));
 const pct = (v: number) => `${Math.round(v * 100)}%`.padStart(5);
-const PIPELINES: Array<[string, (input: PipelineInput) => string]> = [
-  ['이전 코드', oldPipeline],
-  ['새 방식', newPipeline],
-];
+const PIPELINES: Array<[string, (input: PipelineInput) => string]> = [['새 방식', tabPipeline]];
 const ONLY = process.env.EVAL_PIPELINE;
 
 it('채점표', () => {
@@ -37,10 +35,12 @@ it('채점표', () => {
     const truth = fs.readFileSync(file, 'utf8');
     for (const condition of CONDITIONS) {
       const tex = condition.transform ? condition.transform(truth) : truth;
-      const rest: Float32Array = renderTex(tex, { tracks: ['Guitar', 'Drums'], leadMs: condition.leadMs });
-      let bass: Float32Array = renderTex(tex, { tracks: ['Bass'], leadMs: condition.leadMs });
+      const band: Float32Array = renderTex(tex, { tracks: ['Guitar', 'Drums'], leadMs: condition.leadMs });
+      const cleanBass: Float32Array = renderTex(tex, { tracks: ['Bass'], leadMs: condition.leadMs });
       const bleed = condition.bleed ?? 0;
-      if (bleed > 0) bass = bass.map((v, i) => v + bleed * (rest[i] ?? 0));
+      const bassInBand = condition.bassInBand ?? 0;
+      const bass = bleed > 0 ? cleanBass.map((v, i) => v + bleed * (band[i] ?? 0)) : cleanBass;
+      const rest = bassInBand > 0 ? band.map((v, i) => v + bassInBand * (cleanBass[i] ?? 0)) : band;
       const input: PipelineInput = { bass, rest, sampleRate: 44100, title: song };
       for (const [name, run] of PIPELINES) {
         if (ONLY && name !== ONLY) continue;
@@ -53,8 +53,8 @@ it('채점표', () => {
             ` 정확 ${pct(s.strict.f1)} ±16분 ${pct(s.loose.f1)} 프렛 ${pct(s.fretAgreement)} 옥타브 ${s.octaveErrors} 다른음 ${s.wrongPitch} 이동 ${shift} (${Date.now() - started}ms)`,
         );
         summary.set(name, [...(summary.get(name) ?? []), s.strict.f1]);
-        if (name === '새 방식' && s.strict.f1 < 0.95) {
-          details.push(`[${song} / ${condition.name} / ${name}]`, ...barDiff(predicted, truth, [...Array(12).keys()]));
+        if (name === '새 방식' && (s.strict.f1 < 0.95 || process.env.SHOW === song)) {
+          details.push(`[${song} / ${condition.name} / ${name}]`, ...barDiff(predicted, truth, [...Array(process.env.SHOW === song ? 40 : 12).keys()]));
         }
       }
     }

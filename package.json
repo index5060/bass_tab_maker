@@ -30,7 +30,6 @@
   "dependencies": {
     "@coderline/alphatab": "^1.8.4",
     "@coderline/alphatab-vite": "^1.8.4",
-    "@spotify/basic-pitch": "^1.0.1",
     "demucs-web": "^1.0.2",
     "idb": "^8.0.3",
     "onnxruntime-web": "^1.27.0",

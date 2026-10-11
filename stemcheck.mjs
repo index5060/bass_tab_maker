@@ -42,6 +42,9 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
 const consoleErrors = [];
 page.on('console', (m) => {
+  // The app looks for the optional local sidecar on every load; with none running, the
+  // browser logs that refused connection. Expected, and not the app's error.
+  if (m.type() === 'error' && /127\.0\.0\.1:8765/.test(m.location().url ?? '')) return;
   if (m.type() === 'error') consoleErrors.push(m.text());
 });
 page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`));

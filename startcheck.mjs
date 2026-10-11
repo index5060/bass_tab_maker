@@ -8,11 +8,10 @@
  *    runs the real in-browser separator; in an environment that cannot reach its 172MB model
  *    the run has to stop at that step and say why, not hang or take the page down.
  *
- * 2. The whole chain with the real in-browser AI. A helper is started with ONLY the stub
- *    separator on its path (no basic-pitch, no yt-dlp), so separation is stubbed but
- *    transcription is the actual basic-pitch model running in the page. The input is a
- *    synthesised line whose notes are known — the four open strings, one per beat at 120 BPM,
- *    after a 0.75s lead-in — and the tab has to say exactly that.
+ * 2. The whole chain. A helper is started with ONLY the stub separator on its path (no
+ *    yt-dlp), so separation is stubbed but transcription is the real tab engine running in
+ *    the page. The input is a synthesised line whose notes are known — the four open strings,
+ *    one per beat at 120 BPM, after a 0.75s lead-in — and the tab has to say exactly that.
  *
  *   node startcheck.mjs
  */
@@ -54,8 +53,8 @@ function writeBassLineWav(file, amplitude = 0.3) {
       for (let i = 0; i < perNote; i++) {
         const t = i / SR;
         // A plucked-string stand-in: fundamental plus two harmonics, decaying, with a short
-        // gap so each note is its own pluck. The harmonics are what basic-pitch used to write
-        // down as extra notes.
+        // gap so each note is its own pluck. Harmonics written down as extra notes, or a
+        // repeated pluck merged away, would both show in the tab.
         const env = Math.exp(-2.5 * t) * (i > perNote * 0.88 ? 0 : 1);
         const v =
           env *
@@ -93,17 +92,20 @@ const pipelineSteps = (page) =>
     })),
   );
 
-const readScore = (page, title) =>
+const readSong = (page, title) =>
   page.evaluate(
     (title) =>
       new Promise((resolve) => {
         const req = indexedDB.open('bass-practice');
         req.onsuccess = () => {
           const all = req.result.transaction('songs').objectStore('songs').getAll();
-          all.onsuccess = () => resolve(all.result.find((s) => s.title === title)?.scoreData ?? '');
-          all.onerror = () => resolve('');
+          all.onsuccess = () => {
+            const song = all.result.find((s) => s.title === title);
+            resolve({ tex: song?.scoreData ?? '', anchors: song?.syncAnchors ?? [] });
+          };
+          all.onerror = () => resolve({ tex: '', anchors: [] });
         };
-        req.onerror = () => resolve('');
+        req.onerror = () => resolve({ tex: '', anchors: [] });
       }),
     title,
   );
@@ -188,16 +190,24 @@ try {
     title: document.querySelector('.title-input')?.value ?? null,
     tabHint:
       [...document.querySelectorAll('.stem-panel .hint')].map((p) => p.textContent?.trim()).find((t) => t?.includes('음표')) ?? null,
-    fallback:
-      [...document.querySelectorAll('.stem-panel .hint')].map((p) => p.textContent?.trim()).find((t) => t?.includes('내장 채보로')) ?? null,
   }));
-  const tex = await readScore(page, fullRun.title);
-  const body = tex.split('\n').filter((l) => /^[:r\d]/.test(l));
+  const saved = await readSong(page, fullRun.title);
+  const tex = saved.tex;
+  const body = tex.split('\n').filter((l) => l.trim().endsWith('|'));
   const frets = [...body.join(' ').matchAll(/\b(\d+)\.(\d)\b/g)].map((m) => `${m[1]}.${m[2]}`);
 
   await page.screenshot({ path: path.join(ROOT, 'start.png') });
 
-  report = { bare, bareRun, helperFound, fullRun, frets, firstBar: body[0] ?? null, pageErrors: pageErrors.slice(0, 3) };
+  report = {
+    bare,
+    bareRun,
+    helperFound,
+    fullRun,
+    frets,
+    firstBar: body[0] ?? null,
+    firstAnchorMs: saved.anchors[0]?.audioMs ?? null,
+    pageErrors: pageErrors.slice(0, 3),
+  };
 } finally {
   fs.rmSync(wav, { force: true });
   fs.rmSync(wav2, { force: true });
@@ -225,14 +235,15 @@ const checks = {
   separationFailureSaysWhatToDo: /분리 모델.*내려받지 못했습니다/.test(report.bareRun?.steps?.[1]?.text ?? ''),
 
   fullChainCompletes: (report.fullRun?.steps ?? []).length === 3 && report.fullRun.steps.every((s) => s === 'done'),
-  // The tab came from the AI model running in the page, not from the fallback detector.
-  transcribedByBrowserAi: /basic-pitch/.test(report.fullRun?.tabHint ?? '') && !report.fullRun?.fallback,
+  // The tab was written in the page from the stub's stems.
+  transcribedInThePage: /음표 16개/.test(report.fullRun?.tabHint ?? ''),
   // Exactly the line that was played: sixteen notes, open strings in order. Overtones written
   // as notes, split notes, or a wrong fret choice all fail this.
   tabIsExactlyTheLine: JSON.stringify(report.frets) === JSON.stringify(expectedLine),
-  // The 0.75s lead-in is a dotted-quarter of rest at 120 BPM: notes sit where they were played.
-  leadInIsRest: /^:4 r :8 r :4 0\.4/.test(report.firstBar ?? ''),
-  tempoFound: /120\.\d BPM/.test(report.fullRun?.tabHint ?? ''),
+  // Bar 1 starts with the music, and its sync anchor puts it 0.75s into the recording.
+  barOneStartsWithTheMusic: /^\\ts \(4 4\) :4 0\.4/.test(report.firstBar ?? ''),
+  barOneAnchoredAtTheLeadIn: Math.abs((report.firstAnchorMs ?? 0) - LEAD_SECONDS * 1000) < 40,
+  tempoFound: /\b120 BPM/.test(report.fullRun?.tabHint ?? ''),
 
   noPageErrors: (report.pageErrors ?? []).length === 0,
 };

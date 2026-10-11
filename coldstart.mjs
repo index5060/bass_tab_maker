@@ -69,6 +69,9 @@ const consoleErrors = [];
 const fontWarnings = [];
 page.on('console', (m) => {
   const t = m.text();
+  // The app looks for the optional local sidecar on every load; with none running, the
+  // browser logs that refused connection. Expected, and not the app's error.
+  if (m.type() === 'error' && /127\.0\.0\.1:8765/.test(m.location().url ?? '')) return;
   if (m.type() === 'error') consoleErrors.push(t);
   if (/OTS parsing|Failed to decode downloaded font/i.test(t)) fontWarnings.push(t);
 });

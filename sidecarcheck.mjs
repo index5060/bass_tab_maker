@@ -24,9 +24,12 @@ const ROOT = import.meta.dirname;
 const PORT = Number(process.env.PORT ?? 5350);
 const SIDECAR_PORT = 8765;
 
-function writeWav(file, seconds = 2) {
+/** Eight plucked A1 quarter notes at 120 BPM: separated by the stub, then transcribed. */
+const PLUCKS = 8;
+function writeWav(file) {
   const sr = 44100;
-  const frames = sr * seconds;
+  const per = sr / 2;
+  const frames = per * PLUCKS;
   const buf = Buffer.alloc(44 + frames * 4);
   buf.write('RIFF', 0);
   buf.writeUInt32LE(36 + frames * 4, 4);
@@ -42,7 +45,11 @@ function writeWav(file, seconds = 2) {
   buf.write('data', 36);
   buf.writeUInt32LE(frames * 4, 40);
   for (let i = 0; i < frames; i++) {
-    const v = Math.round(Math.sin((2 * Math.PI * 55 * i) / sr) * 8000);
+    const t = (i % per) / sr;
+    // A pluck: a decaying note with a little gap before the next, so each is its own attack.
+    const envelope = Math.exp(-3 * t) * (i % per > per * 0.9 ? 0 : 1);
+    const wave = Math.sin(2 * Math.PI * 55 * t) + 0.4 * Math.sin(4 * Math.PI * 55 * t) + 0.2 * Math.sin(6 * Math.PI * 55 * t);
+    const v = Math.round(envelope * wave * 8000);
     buf.writeInt16LE(v, 44 + i * 4);
     buf.writeInt16LE(v, 44 + i * 4 + 2);
   }
@@ -130,8 +137,8 @@ try {
     };
   });
 
-  // Now the AI transcription path: basic-pitch (stubbed) on the sidecar, note events back
-  // to the browser, written through the shared notes->tab pipeline.
+  // Then a tab from those stems: the transcription runs in the page (a worker) whichever
+  // separator produced them.
   await page.locator('.stem-panel button', { hasText: '베이스 탭 자동 생성' }).click();
   await page.waitForFunction(
     () => !document.querySelector('.stem-panel .phase-line'),
@@ -178,13 +185,13 @@ const checks = {
   // The model string must record which path and settings produced these stems.
   stemsRecordProvenance: /사이드카/.test(report.afterSeparate?.model ?? ''),
 
-  // The AI transcription path must run end to end and say which engine produced the tab.
-  transcriptionUsedBasicPitch: /basic-pitch/.test(report.afterTranscribe?.hint ?? ''),
-  // The stub emits four separate A1 quarter notes. All four must survive as notes — an
-  // earlier version merged same-pitch repeats into one long note, which would destroy the
-  // most common bass figure there is (repeated eighths on the root).
+  // A tab came out of the sidecar's stems.
+  transcribedTheStems: /음표 \d+개/.test(report.afterTranscribe?.hint ?? ''),
+  // The line is eight separate A1 plucks. All eight must survive as notes — an earlier
+  // version merged same-pitch repeats into one long note, which would destroy the most
+  // common bass figure there is (repeated eighths on the root).
   tabKeepsRepeatedNotes:
-    ((report.afterTranscribe?.scoreData ?? '').match(/\b0\.3\b/g) ?? []).length === 4,
+    ((report.afterTranscribe?.scoreData ?? '').match(/\b0\.3\b/g) ?? []).length === PLUCKS,
 
   noPageErrors: (report.pageErrors ?? []).length === 0,
 };

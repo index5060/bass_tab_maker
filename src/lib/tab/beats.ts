@@ -234,8 +234,12 @@ export function trackBeats(
   const rms = Math.sqrt(smooth.reduce((s, v) => s + v * v, 0) / Math.max(1, smooth.length));
   let first = 0;
   let end = frames.length - 1;
-  while (first < end && smooth[first] <= 0.5 * rms) first++;
-  while (end > first && smooth[end] <= 0.5 * rms) end--;
+  // A beat with next to nothing on it is a guess too, however strong its neighbours (the
+  // smoothing lends a silent first beat their strength: measured, a beat placed in the
+  // silence before a song, which then wrote an empty first bar at the wrong tempo).
+  const weak = (i: number) => smooth[i] <= 0.5 * rms || strength[i] <= 0.15 * rms;
+  while (first < end && weak(first)) first++;
+  while (end > first && weak(end)) end--;
   let kept = frames.slice(first, end + 1);
   // ...and beats at either end that fall out of step. The chain has to end somewhere, and it
   // ends on whatever hit comes last — measured: a funk song's last two beats pulled onto the
@@ -256,8 +260,10 @@ export function trackBeats(
     const slope = sxx ? sxy / sxx : period;
     return Math.abs(probe - (my + slope * (at - mx))) > 0.1 * slope;
   };
-  if (kept.length >= 12) {
-    const steadyAt = Array.from({ length: 8 }, (_, k) => kept.length - 12 + k);
+  // The steady stretch: 8 beats where there are that many to spare, at least 4.
+  const steady = Math.min(8, kept.length - 4);
+  if (steady >= 4) {
+    const steadyAt = Array.from({ length: steady }, (_, k) => kept.length - 4 - steady + k);
     const steadyBeats = steadyAt.map((i) => kept[i]);
     let cut = kept.length;
     for (let i = kept.length - 4; i < kept.length; i++) {
@@ -268,8 +274,8 @@ export function trackBeats(
     }
     kept = kept.slice(0, cut);
   }
-  if (kept.length >= 12) {
-    const steadyAt = Array.from({ length: 8 }, (_, k) => 4 + k);
+  if (Math.min(8, kept.length - 4) >= 4) {
+    const steadyAt = Array.from({ length: Math.min(8, kept.length - 4) }, (_, k) => 4 + k);
     const steadyBeats = steadyAt.map((i) => kept[i]);
     let cut = 0;
     for (let i = 3; i >= 0; i--) {

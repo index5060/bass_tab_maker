@@ -16,6 +16,8 @@ export interface Condition {
    * perfect: kick drum and low guitar bleed into the bass stem, typically 20-30dB down.
    */
   bleed?: number;
+  /** The other way round: how much of the bass is left in the minus-bass stem. */
+  bassInBand?: number;
 }
 
 /** Give every bar of the bass track its own tempo, wandering like a band without a click. */
@@ -59,4 +61,5 @@ export const CONDITIONS: Condition[] = [
   { name: '신스 베이스', leadMs: 237, transform: (tex) => withBassProgram(tex, 38) },
   { name: '분리 번짐 -30dB', leadMs: 237, bleed: 0.0316 },
   { name: '분리 번짐 -20dB', leadMs: 237, bleed: 0.1 },
+  { name: '반주에 베이스 -20dB', leadMs: 237, bassInBand: 0.1 },
 ];

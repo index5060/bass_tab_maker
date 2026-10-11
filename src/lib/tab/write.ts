@@ -18,6 +18,8 @@ export interface WriteInput {
   subdivision: number;
   /** Only bars whose downbeat lies inside these beats get a sync anchor (the rest were extrapolated). */
   trackedBeats: { first: number; last: number };
+  /** A tempo the user gave: written at the top when the beats agree with it (within 3%). */
+  bpm?: number;
 }
 
 export interface BarAnchor {
@@ -120,13 +122,18 @@ export function writeTab(input: WriteInput): WriteResult {
   };
 
   const lines: string[] = [];
-  let written = Math.round(barTempo(0));
+  // The tempo at the top is the typical one of the opening bars, not bar 1's alone: the beats
+  // before the music starts are extrapolated, and one odd bar should not set the whole song
+  // a BPM off.
+  const opening = Array.from({ length: Math.min(8, bars) }, (_, b) => barTempo(b)).sort((a, b) => a - b);
+  const measured = opening[(opening.length - 1) >> 1];
+  let written = Math.round(input.bpm && Math.abs(measured / input.bpm - 1) < 0.03 ? input.bpm : measured);
   const startBpm = written;
   let cursor = 0; // index into timeline
   for (let bar = 0; bar < bars; bar++) {
     const tokens: string[] = [];
     if (bar === 0) tokens.push(`\\ts (${beatsPerBar} 4)`);
-    else {
+    if (bar > 0 || Math.abs(barTempo(0) - written) >= 2) {
       // Only real tempo changes are written: a click-track song gets one marking, a band that
       // pushes and drags gets one where it moved.
       const tempo = Math.round(barTempo(bar));

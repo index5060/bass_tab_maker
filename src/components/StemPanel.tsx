@@ -1,6 +1,6 @@
 import type { SeparationProgress, StemSet } from '../lib/stems';
 import type { IsolationDiagnosis, SeparationCapability } from '../lib/separator';
-import type { AutoTabProgress, AutoTabSummary } from '../lib/autoTab';
+import type { TabProgress, TabSummary } from '../lib/tab/client';
 import type { SidecarInfo, SidecarSettings } from '../lib/sidecar';
 import { AUDIO_FILE_ACCEPT } from '../lib/audioImport';
 
@@ -40,16 +40,19 @@ export interface StemPanelProps {
 
   /** Automatic transcription of the isolated bass stem. */
   tabBusy: boolean;
-  tabProgress: AutoTabProgress | null;
-  tabResult: AutoTabSummary | null;
+  tabProgress: TabProgress | null;
+  /** The tab on screen, when it was made for this song in this session. */
+  tabResult: TabSummary | null;
   onTranscribe: () => void;
-  /** User-typed BPM for transcription; empty string means estimate it. */
+  /** User-typed BPM for transcription; empty string means find it. */
   tabBpm: string;
   onTabBpm: (value: string) => void;
-  /** Download what the transcriber actually heard, for debugging a bad tab. */
+  /** Download what the analysis heard, for debugging a bad tab. */
   onExportDiagnostics: () => void;
-  /** Rewrite the same notes at half or double tempo — the one call the onsets cannot make. */
+  /** Listen again at half or double the tempo. */
   onRescaleTempo: (factor: number) => void;
+  /** Same notes, different bars: "one" a beat earlier/later, or another metre. */
+  onRelayout: (change: { shiftBeats?: number; beatsPerBar?: number }) => void;
 
   /** Local sidecar running the real demucs. null while probing, never an error. */
   sidecar: SidecarInfo | null;
@@ -113,52 +116,22 @@ export function StemPanel(props: StemPanelProps) {
                   type="number"
                   min={30}
                   max={300}
-                  placeholder="자동 추정"
+                  placeholder="자동"
                   value={props.tabBpm}
                   onChange={(e) => props.onTabBpm(e.target.value)}
                 />
-                <span className="dim tiny">아는 값이 있으면 입력 — 자동 추정보다 정확합니다</span>
+                <span className="dim tiny">아는 값이 있으면 입력 — 비워 두면 반주에서 찾습니다</span>
               </div>
               <button className="btn btn-primary wide" onClick={props.onTranscribe}>
-                베이스 탭 자동 생성 (AI)
+                베이스 탭 자동 생성
               </button>
               {props.tabResult ? (
                 props.tabResult.notes === 0 ? (
                   <div className="isolation-diag">
                     <p className="hint warn">
-                      <strong>음표를 하나도 찾지 못했습니다.</strong> {explainEmpty(props.tabResult)}
+                      <strong>음표를 하나도 찾지 못했습니다.</strong> 베이스 스템이 거의 무음이거나
+                      음정이 잡히지 않았습니다. 스템을 들어 보고, 비어 있으면 다시 분리해 보세요.
                     </p>
-                    <table className="diag-table">
-                      <tbody>
-                        <tr>
-                          <th>분석 프레임</th>
-                          <td>{props.tabResult.stats.frames}</td>
-                        </tr>
-                        <tr>
-                          <th>유효 프레임</th>
-                          <td>{props.tabResult.stats.voicedFrames}</td>
-                        </tr>
-                        <tr>
-                          <th>스템 최대 레벨</th>
-                          <td>{props.tabResult.stats.peakBeforeNormalise.toFixed(4)}</td>
-                        </tr>
-                        <tr>
-                          <th>중앙 신뢰도</th>
-                          <td>{(props.tabResult.stats.medianConfidence * 100).toFixed(0)}%</td>
-                        </tr>
-                        <tr>
-                          <th>너무 짧아 버림</th>
-                          <td>{props.tabResult.stats.droppedTooShort}</td>
-                        </tr>
-                        <tr>
-                          <th>음역 밖이라 버림</th>
-                          <td>{props.tabResult.stats.droppedOutOfRange}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                    {/* The empty result is exactly when the raw record matters most — this
-                        button used to appear only on success, which meant the one case worth
-                        diagnosing was the one case you could not export. */}
                     <button className="btn tiny" onClick={props.onExportDiagnostics}>
                       채보 진단 JSON 저장
                     </button>
@@ -166,18 +139,12 @@ export function StemPanel(props: StemPanelProps) {
                 ) : (
                   <>
                     <p className="hint">
-                      {props.tabResult.engine === 'basic-pitch' ? 'AI 채보(basic-pitch)' : '내장 채보'}
-                      {' — '}음표 <strong>{props.tabResult.notes}개</strong>, 템포{' '}
-                      <strong>{props.tabResult.bpm.toFixed(1)} BPM</strong>
-                      {props.tabResult.stats.subdivision === 3 ? ' (셔플)' : ''}, 신뢰도{' '}
-                      {(props.tabResult.confidence * 100).toFixed(0)}%. 초안이니 귀로 확인하며
-                      고치세요.
+                      음표 <strong>{props.tabResult.notes}개</strong> · <strong>{props.tabResult.bpm} BPM</strong>
+                      {props.tabResult.pinnedBpm ? ' (입력값)' : ''} · {props.tabResult.beatsPerBar}/4박자 ·{' '}
+                      {props.tabResult.bars}마디. 박은{' '}
+                      {props.tabResult.beatSource === 'band' ? '반주(드럼)에서' : '베이스에서'}, 음은 베이스
+                      스템에서 읽었고, 마디마다 원곡과 싱크가 맞춰져 있습니다.
                     </p>
-                    {props.tabResult.fallbackReason && (
-                      <p className="hint warn">
-                        AI 채보를 쓰지 못해 내장 채보로 만들었습니다 — {props.tabResult.fallbackReason}
-                      </p>
-                    )}
                     {tabWarnings(props.tabResult).map((warning) => (
                       <p className="hint warn" key={warning}>
                         {warning}
@@ -185,12 +152,28 @@ export function StemPanel(props: StemPanelProps) {
                     ))}
 
                     {/*
-                      Half and double are the same grid — the onsets genuinely cannot say which
-                      is right, so this is the user's call, not the algorithm's. Reuses the
-                      notes already detected, so it is instant.
+                      Where "one" is and which tempo level is the beat are the two calls the
+                      analysis can get wrong while every note is right. Both are one click:
+                      moving the bar lines is instant (same notes), changing the tempo level
+                      listens again with the period pinned.
                     */}
                     <div className="row gap">
-                      <span className="dim tiny">마디가 두 배로 길거나 짧게 느껴지면</span>
+                      <span className="dim tiny">마디 시작</span>
+                      <button className="btn tiny" onClick={() => props.onRelayout({ shiftBeats: -1 })}>
+                        ← 한 박 앞으로
+                      </button>
+                      <button className="btn tiny" onClick={() => props.onRelayout({ shiftBeats: 1 })}>
+                        한 박 뒤로 →
+                      </button>
+                      <button
+                        className="btn tiny"
+                        onClick={() => props.onRelayout({ beatsPerBar: props.tabResult!.beatsPerBar === 3 ? 4 : 3 })}
+                      >
+                        {props.tabResult.beatsPerBar === 3 ? '4/4로' : '3/4로'}
+                      </button>
+                    </div>
+                    <div className="row gap">
+                      <span className="dim tiny">음표가 두 배로 길거나 짧으면</span>
                       <button className="btn tiny" onClick={() => props.onRescaleTempo(0.5)}>
                         템포 ÷2
                       </button>
@@ -207,16 +190,13 @@ export function StemPanel(props: StemPanelProps) {
                         채보 진단 JSON 저장
                       </button>
                     </div>
-                    <p className="hint tiny dim">
-                      들린 음 전부가 시각·확신도와 함께 저장됩니다. 새로고침하면 사라지니 지금
-                      받아두세요.
-                    </p>
                   </>
                 )
               ) : (
                 <p className="hint">
-                  분리된 베이스에서 음정을 읽어 탭 초안을 만듭니다. 슬라이드·해머온·고스트노트는
-                  구분하지 못하고 평범한 음표로 나옵니다.
+                  반주에서 박자를 찾고, 그 박마다 16분음표 칸으로 나눠 베이스 스템에서 음을 읽어
+                  4현 베이스 탭(E A D G)으로 적습니다. 슬라이드·해머온·고스트노트는 평범한
+                  음표로 나옵니다.
                 </p>
               )}
             </>
@@ -412,83 +392,24 @@ function fmtMb(bytes: number): string {
 }
 
 /**
- * Say where the notes went.
- *
- * A page of rests with no explanation is the worst possible outcome — it looks like the
- * feature is broken when usually one gate was simply set wrong for this material.
+ * Say out loud the ways a finished-looking tab can still be off, so they are checked first.
  */
-function explainEmpty(result: NonNullable<StemPanelProps['tabResult']>): string {
-  const s = result.stats;
-  if (s.peakBeforeNormalise < 0.001) {
-    return '스템이 사실상 무음입니다. 분리가 베이스를 못 잡았을 수 있으니 다시 분리해 보세요.';
-  }
-  if (s.voicedFrames === 0) {
-    return '주기적인 음정이 전혀 잡히지 않았습니다. 이 스템에 베이스 대신 잔향이나 노이즈만 남았을 수 있습니다.';
-  }
-  if (s.droppedOutOfRange > s.rawNotes / 2) {
-    return '검출된 음이 대부분 4현 베이스 음역 밖입니다. 다운튜닝이거나 옥타브 오검출입니다.';
-  }
-  if (s.droppedTooShort > s.rawNotes / 2) {
-    return '검출된 음이 대부분 너무 짧습니다. 음이 끊겨 들리는 스템에서 흔한 증상입니다.';
-  }
-  return '음정은 잡혔는데 음표로 묶이지 않았습니다.';
-}
-
-/**
- * Say out loud the ways a result can be wrong while still looking finished.
- *
- * A tab with a confident-looking BPM and a full page of notes reads as trustworthy whether or
- * not the tempo was ever found, whether or not a third of the song went missing, and whether
- * or not the detector spent the choruses an octave up. Each of those is measured — none of
- * them was ever shown. That is the whole gap between "the transcription is bad" and knowing
- * which part of it to fix.
- */
-function tabWarnings(result: NonNullable<StemPanelProps['tabResult']>): string[] {
-  const s = result.stats;
+function tabWarnings(result: TabSummary): string[] {
   const out: string[] = [];
-
-  if (s.tempoStrength < 0.35) {
+  if (result.downbeatConfidence < 0.25) {
     out.push(
-      `온셋이 ${result.bpm.toFixed(1)} BPM 격자에 잘 안 물렸습니다 (강도 ${s.tempoStrength.toFixed(
-        2,
-      )}). 리듬은 믿지 마세요 — 아는 BPM이 있으면 위에 직접 넣는 게 훨씬 낫습니다.`,
+      '마디의 첫 박이 분명하지 않았습니다. 탭이 한 박씩 밀려 보이면 "마디 시작" 버튼으로 옮기세요 — 음은 그대로이고 마디선만 움직입니다.',
     );
   }
-
-  // Judge timing against the note value it has to land on, not against a fixed millisecond
-  // count: 30ms is tight at 90 BPM and hopeless at 180.
-  const sixteenthMs = 60000 / result.bpm / 4;
-  const errorFraction = s.gridErrorMs / sixteenthMs;
-  if (errorFraction > 0.2) {
+  if (Math.abs(result.tuningCents) > 30) {
     out.push(
-      `온셋이 16분음표 간격의 ${(errorFraction * 100).toFixed(
-        0,
-      )}%만큼 격자에서 벗어나 있습니다. 템포가 흔들리는 연주이거나 박자가 반/두 배로 잡혔을 수 있습니다.`,
+      `음원이 표준 음높이(A=440)에서 ${Math.round(Math.abs(result.tuningCents))}센트 ${
+        result.tuningCents > 0 ? '높게' : '낮게'
+      } 녹음돼 있습니다. 가장 가까운 음으로 적었습니다.`,
     );
   }
-
-  if (s.largestGapMs > 8000) {
-    out.push(
-      `중간에 ${(s.largestGapMs / 1000).toFixed(
-        0,
-      )}초 동안 음표가 하나도 없습니다. 그 구간은 쉼표로 나오지만 실제로는 못 잡은 것일 수 있습니다.`,
-    );
-  } else if (s.coverage < 0.45) {
-    out.push(
-      `베이스가 나오는 구간의 ${(s.coverage * 100).toFixed(
-        0,
-      )}%에서만 음이 잡혔습니다. 스템을 htdemucs_ft로 다시 분리하면 나아지는 경우가 많습니다.`,
-    );
-  }
-
-  if (s.octavesRepaired > 0) {
-    out.push(`옥타브 오검출 ${s.octavesRepaired}개를 자동으로 내렸습니다.`);
-  }
-
-  if (s.subdivision === 3) {
-    out.push(
-      '박을 셋으로 나눈 셔플로 읽었습니다. 악보는 표준 관행대로 직선 8분음표로 적고 위에 셔플 표시를 넣었습니다 — 곧게 들린다면 BPM을 직접 넣어 다시 돌려보세요.',
-    );
+  if (result.beatSource === 'bass') {
+    out.push('반주 스템이 비어 있어 베이스에서 박자를 찾았습니다. 리듬이 어긋나면 템포를 직접 입력해 보세요.');
   }
   return out;
 }

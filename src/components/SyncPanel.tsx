@@ -44,6 +44,23 @@ export function SyncPanel(props: SyncPanelProps) {
     [normalized, props.currentTick],
   );
 
+  const anchorList = (
+    <ul className="anchor-list">
+      {normalized.map((a, i) => (
+        <li key={`${a.synthTick}-${i}`}>
+          <button className="link" onClick={() => props.onSeekToAnchor(a)}>
+            {a.barIndex !== undefined ? `${a.barIndex + 1}마디` : `tick ${a.synthTick}`}
+            {a.barOccurence ? ` (${a.barOccurence + 1}회차)` : ''}
+          </button>
+          <span className="dim mono tiny">{(a.audioMs / 1000).toFixed(3)}s</span>
+          <button className="link danger" onClick={() => props.onRemove(a)} title="삭제">
+            ×
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+
   return (
     <section className="panel sync-panel">
       <header className="panel-head">
@@ -113,21 +130,15 @@ export function SyncPanel(props: SyncPanelProps) {
             </div>
           )}
 
-          {normalized.length > 0 && (
-            <ul className="anchor-list">
-              {normalized.map((a, i) => (
-                <li key={`${a.synthTick}-${i}`}>
-                  <button className="link" onClick={() => props.onSeekToAnchor(a)}>
-                    {a.barIndex !== undefined ? `${a.barIndex + 1}마디` : `tick ${a.synthTick}`}
-                    {a.barOccurence ? ` (${a.barOccurence + 1}회차)` : ''}
-                  </button>
-                  <span className="dim mono tiny">{(a.audioMs / 1000).toFixed(3)}s</span>
-                  <button className="link danger" onClick={() => props.onRemove(a)} title="삭제">
-                    ×
-                  </button>
-                </li>
-              ))}
-            </ul>
+          {normalized.length > 0 && normalized.length <= 8 && anchorList}
+          {/* An automatic tab anchors every bar line: a hundred rows nobody needs open. */}
+          {normalized.length > 8 && (
+            <details className="anchor-details">
+              <summary className="dim tiny">
+                마디마다 맞춘 앵커 {normalized.length}개 — 펼쳐 보기
+              </summary>
+              {anchorList}
+            </details>
           )}
 
           {normalized.length > 0 && (

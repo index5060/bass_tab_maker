@@ -1,10 +1,10 @@
 /**
  * End-to-end check of "YouTube link -> audio file -> bass stem -> tab".
  *
- * Runs the real app against the sidecar with stub yt-dlp / demucs / basic-pitch (see
- * sidecar/_stubdemucs), so the whole chain — the link check, the download job, separation,
- * transcription, saving, and every "save as file" button — is exercised in seconds, with no
- * network and no GPU. The stubs fabricate the audio; what is under test is the plumbing.
+ * Runs the real app against the sidecar with stub yt-dlp / demucs (see sidecar/_stubdemucs),
+ * so the whole chain — the link check, the download job, separation, transcription in the
+ * page, saving, and every "save as file" button — is exercised in seconds, with no network
+ * and no GPU. The stubs fabricate the audio; what is under test is the plumbing.
  *
  * Also checks the failure paths a real user will hit: a video yt-dlp cannot fetch must stop
  * the pipeline at step one and say why, and a page on another origin must not be able to
@@ -213,9 +213,9 @@ const checks = {
     report.files?.bassFile?.name === `Stub Song ${VIDEO_ID}-bass.wav` && report.files?.bassFile?.head === 'RIFF',
 
   // MVP 3: a tab was written from the bass, and comes out as a Guitar Pro file.
-  tabWrittenByAi: /basic-pitch/.test(report.afterRun?.tabHint ?? ''),
-  // The stub plays A1 (open A string = "0.3") every half second for four seconds.
-  tabHasTheNotes: (report.savedSong?.notesInTab ?? 0) >= 4,
+  tabWritten: /음표 \d+개/.test(report.afterRun?.tabHint ?? ''),
+  // The stub plucks A1 (open A string = "0.3") every half second for four seconds.
+  tabHasTheNotes: report.savedSong?.notesInTab === 8,
   // Guitar Pro 7 files are zip archives.
   tabSavedAsGp: report.files?.tabFile?.name === `Stub Song ${VIDEO_ID}.gp` && report.files?.tabFile?.head.startsWith('PK'),
 

@@ -236,7 +236,8 @@ export function decodeBassLine(
       const leak = differences[Math.floor(differences.length * 0.05)];
       const usual = differences[differences.length >> 1];
       const cluster = differences.filter((d) => Math.abs(d - leak) <= 2).length / differences.length;
-      if (cluster >= 0.1 && leak + 6 < usual - 10) {
+      // ...and leakage is quieter than its source: a "floor" level with the band is not one.
+      if (cluster >= 0.1 && leak < -6 && leak + 6 < usual - 10) {
         for (let i = 0; i < slots; i++) if (levels[i] < bandLevels[i] + leak + 6) leakOnly[i] = 1;
       }
     }

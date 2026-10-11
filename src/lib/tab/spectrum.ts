@@ -173,6 +173,9 @@ export function spectralFlux(
  * than that leak, its rise is the band's, and is not counted. Where the bass itself is well
  * above the leak, its rises are its own, whatever the drums are doing at the same moment.
  */
+/** Leakage sits at least this far (dB) under its source. */
+const LEAK_BELOW = 6;
+
 export function residualFlux(
   env: BandEnvelope,
   other: BandEnvelope,
@@ -196,7 +199,11 @@ export function residualFlux(
     }
     if (differences.length < 20) continue;
     differences.sort((x, y) => x - y);
-    leak[b] = differences[Math.floor(differences.length * 0.05)];
+    const floor = differences[Math.floor(differences.length * 0.05)];
+    // Leakage is attenuated — that is what separation does. A floor that is not well under
+    // the band means the stem holds its own sound there even at its quietest (or the band
+    // stem holds the bass: leakage the other way), and then no rise of it is the band's.
+    if (floor < -LEAK_BELOW) leak[b] = floor;
   }
 
   const previous = (e: BandEnvelope, f: number, b: number) => {

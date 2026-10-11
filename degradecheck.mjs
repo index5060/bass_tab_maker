@@ -20,9 +20,7 @@ import path from 'node:path';
 const ROOT = import.meta.dirname;
 const PORT = Number(process.env.PORT ?? 5270);
 const STASH = path.join(ROOT, '.degrade-stash');
-// basic-pitch joined these when AI transcription moved into the page: same rule, the app
-// must survive without it.
-const PACKAGES = ['onnxruntime-web', 'demucs-web', '@spotify/basic-pitch'];
+const PACKAGES = ['onnxruntime-web', 'demucs-web'];
 
 function stash() {
   fs.mkdirSync(STASH, { recursive: true });
@@ -49,7 +47,7 @@ let browser;
 let report = {};
 
 try {
-  console.log('▶ onnxruntime-web / demucs-web / @spotify/basic-pitch 를 node_modules에서 제거');
+  console.log('▶ onnxruntime-web / demucs-web 을 node_modules에서 제거');
   stash();
 
   server = spawn('npx', ['vite', '--port', String(PORT), '--force'], { cwd: ROOT });

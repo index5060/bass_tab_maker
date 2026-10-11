@@ -54,6 +54,8 @@ export interface TabAnalysis {
   beatSource: 'band' | 'bass';
   /** The tempo octaves that were weighed (empty when the tempo was given). */
   tempos: BeatChoice['considered'];
+  /** The tempo the user gave, if any. */
+  pinnedBpm?: number;
   durationSeconds: number;
 }
 
@@ -76,18 +78,33 @@ export interface TabResult {
 
 const SUBDIVISION = 4;
 
+/** RMS of every 8th sample: plenty to compare two signals' levels, at an eighth of the cost. */
+function roughRms(signal: Float32Array): number {
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < signal.length; i += 8) {
+    sum += signal[i] * signal[i];
+    count++;
+  }
+  return Math.sqrt(sum / Math.max(1, count));
+}
+
 export function analyseTab(input: TabInput, onStage?: (stage: AnalysisStage) => void): TabAnalysis {
   const { bass, sampleRate } = input;
   const durationSeconds = bass.length / sampleRate;
+  // A band 30dB under the bass is no band: a bass-only recording, whose minus-bass stem is
+  // just separation residue. Beats then come from the bass itself.
+  const band = input.band && roughRms(input.band) > 0.03 * roughRms(bass) ? input.band : null;
+
   onStage?.('beats');
-  const onset = onsetStrength(input.band ?? bass, sampleRate);
-  const track = findBeats(onset, durationSeconds, { bpm: input.bpm, drums: input.band !== null });
+  const onset = onsetStrength(band ?? bass, sampleRate);
+  const track = findBeats(onset, durationSeconds, { bpm: input.bpm, drums: band !== null });
 
   onStage?.('notes');
-  const line = decodeBassLine(bass, sampleRate, track.beats, { subdivision: SUBDIVISION, band: input.band });
+  const line = decodeBassLine(bass, sampleRate, track.beats, { subdivision: SUBDIVISION, band });
 
   onStage?.('bars');
-  const meter = findMeter(track.beats, line.notes, SUBDIVISION, input.band ? onset : null, {
+  const meter = findMeter(track.beats, line.notes, SUBDIVISION, band ? onset : null, {
     first: track.firstTracked,
     last: track.lastTracked,
   });
@@ -101,8 +118,9 @@ export function analyseTab(input: TabInput, onStage?: (stage: AnalysisStage) => 
     subdivision: SUBDIVISION,
     meter,
     tuningCents: line.tuningCents,
-    beatSource: input.band ? 'band' : 'bass',
+    beatSource: band ? 'band' : 'bass',
     tempos: track.considered,
+    pinnedBpm: input.bpm && input.bpm > 0 ? input.bpm : undefined,
     durationSeconds,
   };
 }
@@ -167,6 +185,7 @@ export function writeTabFrom(
       first: analysis.firstTracked + pad - dropBars * m,
       last: analysis.lastTracked + pad - dropBars * m,
     },
+    bpm: analysis.pinnedBpm,
   });
 
   return {

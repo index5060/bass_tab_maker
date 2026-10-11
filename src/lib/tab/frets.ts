@@ -13,8 +13,8 @@
  *   - moving the hand to a new position costs the most — except while an open string is
  *     ringing, when the fretting hand is free and the shift is nearly free (the classic way
  *     a line gets from the 8th fret to the 4th);
- *   - changing string costs something too: a root-note line slides along one string rather
- *     than hopping across all four;
+ *   - changing string between fretted notes costs something too: a root-note line slides
+ *     along one string rather than hopping across all four;
  *   - for the same pitch, a lower string and a lower fret are preferred, gently;
  *   - a repeated note stays where it was.
  * Checked against the published Holiday tab, where Mike Dirnt plays F-Db-Ab-Eb as A8, A4, E4,
@@ -48,19 +48,24 @@ function candidates(midi: number, tuning: number[]): State[] {
   for (let s = 0; s < tuning.length; s++) {
     const fret = midi - tuning[s];
     if (fret < 0 || fret > MAX_FRET) continue;
-    // Lower strings and lower frets preferred, gently: tie-breakers, not rules. Low-register
-    // notes (under C3) are kept off the D and G strings: that is where published tabs and
-    // players put roots, for the fuller sound of the thick strings.
-    const unary = 0.15 * s + 0.05 * fret + (midi < 48 && s >= 2 ? 0.3 : 0);
+    // Lower strings and lower frets preferred, gently: tie-breakers, not rules. Fretted
+    // low-register notes (under C3) are kept off the D and G strings: that is where published
+    // tabs and players put roots, for the fuller sound of the thick strings. An open string
+    // costs nothing: nothing has to be held down, and for its own pitch it is the obvious
+    // place (measured: costed by string height like the rest, the open-string arpeggio
+    // E-A-D-G came out with its G on the A string's 10th fret).
+    const unary = fret === 0 ? 0 : 0.15 * s + 0.05 * fret + (midi < 48 && s >= 2 ? 0.3 : 0);
     if (fret === 0) {
       // An open string does not care where the hand is: it can stay wherever it was.
       for (let hand = 1; hand <= MAX_HAND; hand++) out.push({ stringIndex: s, fret, hand, cost: unary });
       continue;
     }
-    // Index finger anywhere from four frets below (pinky stretch) to one above (index
-    // stretch back); frets h..h+3 are the comfortable span.
-    for (let hand = Math.max(1, fret - 4); hand <= Math.min(MAX_HAND, fret + 1); hand++) {
-      const stretch = fret - hand === 4 || fret - hand === -1 ? 0.3 : 0;
+    // Index finger anywhere from the note itself to four frets below it: frets h..h+3 are
+    // the comfortable span, h+4 a pinky stretch. (An index stretch back as well let one hand
+    // position cover six frets — measured: the open-string arpeggio E-A-D-G written as
+    // 0 0 5 10 on the A string, because 5 and 10 shared a "position".)
+    for (let hand = Math.max(1, fret - 4); hand <= Math.min(MAX_HAND, fret); hand++) {
+      const stretch = fret - hand === 4 ? 0.3 : 0;
       out.push({ stringIndex: s, fret, hand, cost: unary + stretch });
     }
   }
@@ -73,7 +78,10 @@ function transition(from: State, to: State, interval: number): number {
   // The hand is free while an open string rings: that is when shifts happen.
   if (from.fret === 0) cost *= 0.25;
   const strings = to.stringIndex - from.stringIndex;
-  cost += 0.4 * Math.abs(strings);
+  // Crossing strings costs the fretting hand something only between fretted notes (a root
+  // line slides along one string rather than hopping across four); to or from an open string
+  // there is nothing to hold down.
+  cost += (from.fret > 0 && to.fret > 0 ? 0.4 : 0.25) * Math.abs(strings);
   if (interval === 0 && (strings !== 0 || to.fret !== from.fret)) cost += 2;
   // The octave shape — two strings over, two frets up — is how an octave is played on a bass
   // (the funk "octave pop"), low register or not.
