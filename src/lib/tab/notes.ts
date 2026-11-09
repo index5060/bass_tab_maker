@@ -164,6 +164,8 @@ const REPLUCK_RATIO = 0.3;
 const REPLUCK_FALL = -3;
 /** A clear rise in level (dB, 50ms either side) is a re-pluck however soft its attack. */
 const REPLUCK_RISE = 3;
+/** How far either side (s) the pluck yardstick is taken from: a section, not the whole song. */
+const TYPICAL_REACH = 20;
 
 /** What the decoder saw in one slot — for diagnosing a wrong tab, not for normal use. */
 export interface SlotTrace {
@@ -173,7 +175,7 @@ export interface SlotTrace {
   attack: number;
   /** Level change across the attack (dB), when there is one. */
   rise: number;
-  /** What a pluck typically measures on this recording. */
+  /** What a pluck typically measures around here on this recording. */
   typical: number;
   midi: number;
   confidence: number;
@@ -282,7 +284,12 @@ export function decodeBassLine(
   //    across an attack while the previous note still sounds, it is a new note for certain;
   //    those attacks set the yardstick. (Attacks out of silence are left out: from nothing,
   //    every band jumps by tens of dB, which says nothing about a pluck into a ringing note.)
+  //    The yardstick is local: a song can change bass, or the way it is played, halfway
+  //    through (measured: Slakh Track00018, an acoustic bass whose plucks measure 3.3, then a
+  //    finger bass at 0.5-1.0 — against one yardstick for the whole song, every repeated note
+  //    of the second half was read as part of the one before, 366 of them).
   const changes: number[] = [];
+  const changeSlots: number[] = [];
   const legato: number[] = [];
   for (let i = 1; i < slots; i++) {
     if (attackAt[i] <= 0 || isSilent(i - 1)) continue;
@@ -290,10 +297,24 @@ export function decodeBassLine(
     const after = pitchAfter(i);
     if (!confident(i - 1) || after < 0) continue;
     const step = Math.abs(after - slotMidi(i - 1));
-    if (step !== 0 && step % 12 !== 0) changes.push(attackAt[i]);
+    if (step !== 0 && step % 12 !== 0) {
+      changes.push(attackAt[i]);
+      changeSlots.push(i);
+    }
   }
   const all = Array.from(attackAt).filter((v) => v > 0);
-  const typical = median(changes.length >= 4 ? changes : legato.length >= 4 ? legato : all.length ? all : [1]);
+  const overall = median(changes.length >= 4 ? changes : legato.length >= 4 ? legato : all.length ? all : [1]);
+  // Pitch changes within TYPICAL_REACH either side; the whole song's where there are too few.
+  const typicalAt = new Float64Array(slots).fill(overall);
+  if (changes.length >= 4) {
+    let lo = 0;
+    let hi = 0;
+    for (let i = 0; i < slots; i++) {
+      while (lo < changeSlots.length && slotTimes[changeSlots[lo]] < slotTimes[i] - TYPICAL_REACH) lo++;
+      while (hi < changeSlots.length && slotTimes[changeSlots[hi]] <= slotTimes[i] + TYPICAL_REACH) hi++;
+      if (hi - lo >= 4) typicalAt[i] = median(changes.slice(lo, hi));
+    }
+  }
 
   // 5. Walk the slots: sound after silence starts a note, silence ends one; an attack starts
   //    one when the pitch changes, or — for the same pitch struck again — when the level rises
@@ -310,7 +331,7 @@ export function decodeBassLine(
   };
   for (let i = 0; i < slots; i++) {
     const trace = (decision: SlotTrace['decision'], reason: string) =>
-      options.trace?.({ slot: i, time: slotTimes[i], levelDb: levels[i], attack: attackAt[i], rise: riseAt[i], typical, midi: slotMidi(i), confidence: pitchConfidence[i], decision, reason });
+      options.trace?.({ slot: i, time: slotTimes[i], levelDb: levels[i], attack: attackAt[i], rise: riseAt[i], typical: typicalAt[i], midi: slotMidi(i), confidence: pitchConfidence[i], decision, reason });
     if (isSilent(i)) {
       close(i);
       trace('silent', leakOnly[i] ? 'leak' : '');
@@ -339,7 +360,7 @@ export function decodeBassLine(
       // The same note again — or something that only looks like an attack inside a held note:
       // a second bump in one pluck's decay, a synth note's release. Those are far weaker than
       // a pluck, and a release is the level falling away.
-      const ratio = attackAt[i] / typical;
+      const ratio = attackAt[i] / typicalAt[i];
       if ((ratio >= REPLUCK_RATIO && riseAt[i] >= REPLUCK_FALL) || riseAt[i] >= REPLUCK_RISE) {
         starts = true;
         reason = `repluck ${ratio.toFixed(2)} rise ${riseAt[i].toFixed(1)}dB`;
