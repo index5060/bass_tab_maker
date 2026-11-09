@@ -26,7 +26,7 @@
     "test:youtube": "node youtubecheck.mjs",
     "sidecar": "node sidecar/run.mjs",
     "replay": "node replay.mjs",
-    "eval": "vitest run --config vitest.eval.config.ts && node -e \"for (const f of ['report.txt','sync-report.txt']) { try { process.stdout.write(require('fs').readFileSync('eval/out/'+f,'utf8')) } catch {} }\""
+    "eval": "vitest run --config vitest.eval.config.ts && node -e \"for (const f of ['report.txt','sync-report.txt','slakh-report.txt']) { try { process.stdout.write(require('fs').readFileSync('eval/out/'+f,'utf8')) } catch {} }\""
   },
   "dependencies": {
     "@coderline/alphatab": "^1.8.4",
@@ -38,6 +38,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@tonejs/midi": "^2.0.28",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
