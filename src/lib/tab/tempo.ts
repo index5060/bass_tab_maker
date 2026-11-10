@@ -58,12 +58,12 @@ function drumFit(beats: number[], onset: OnsetStrength, tracked: { first: number
 export function findBeats(
   onset: OnsetStrength,
   durationSeconds: number,
-  options: { bpm?: number; drums: boolean },
+  options: { bpm?: number; drums: boolean; tightness?: number },
 ): BeatChoice {
   if (options.bpm && options.bpm > 0) {
     // The user knows the tempo: that pins the period, the beats are still tracked.
     const tempo = { bpm: options.bpm, period: 60 / options.bpm / onset.hop };
-    return { ...trackBeats(onset, durationSeconds, { tempo }), tempo, considered: [] };
+    return { ...trackBeats(onset, durationSeconds, { tempo, tightness: options.tightness, followDrift: true }), tempo, considered: [] };
   }
 
   const candidates = tempoCandidates(onset.envelope, onset.hop, { minBpm: MIN_BPM, maxBpm: MAX_BPM });
@@ -77,7 +77,7 @@ export function findBeats(
       period: 60 / bpm / onset.hop,
       score: 0,
     };
-    const track = trackBeats(onset, durationSeconds, { tempo });
+    const track = trackBeats(onset, durationSeconds, { tempo, tightness: options.tightness });
     const tracked = { first: track.firstTracked, last: track.lastTracked };
     const beats = track.beats.slice(tracked.first, tracked.last + 1);
     const strength = mean(beats.map((t) => peakNear(onset.envelope, onset.hop, onset.offset, t)));
@@ -95,8 +95,12 @@ export function findBeats(
     return { ...t, total };
   });
   const chosen = scored.reduce((a, b) => (b.total > a.total ? b : a));
+  // The tempo chosen, its beats tracked once more, now following the drummer's drift (which,
+  // let into the comparison above, changes which tempo wins: measured on Slakh, two songs
+  // flipped to half or double tempo).
+  const final = trackBeats(onset, durationSeconds, { tempo: chosen.tempo, tightness: options.tightness, followDrift: true });
   return {
-    ...chosen.track,
+    ...final,
     tempo: chosen.tempo,
     considered: scored.map((t) => ({
       bpm: t.tempo.bpm,

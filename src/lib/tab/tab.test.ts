@@ -83,6 +83,46 @@ describe('beats', () => {
     expect(track.beats[0]).toBeLessThan(0.6);
     expect(track.beats[track.beats.length - 1]).toBeGreaterThan(9.4);
   });
+
+  /** Distance from each tracked beat to the nearest of `times`, worst case. */
+  const worstMiss = (track: { beats: number[]; firstTracked: number; lastTracked: number }, times: number[]) =>
+    Math.max(...track.beats.slice(track.firstTracked, track.lastTracked + 1).map((t) => Math.min(...times.map((x) => Math.abs(x - t)))));
+
+  it('stays on the beat while the off-beat is louder for a few bars', () => {
+    // Kick and snare on the beats throughout; for eight bars in the middle a hit louder than
+    // the beat's own lands on every off-beat too. (At librosa's tightness the beats move onto
+    // those hits for the eight bars.)
+    const seconds = 40;
+    const band = new Float32Array(seconds * SR);
+    const times: number[] = [];
+    for (let k = 0; 0.5 + k * 0.5 < seconds - 0.3; k++) {
+      const t = 0.5 + k * 0.5;
+      times.push(t);
+      hit(band, t, k % 2 === 0 ? 'kick' : 'snare', 0.3);
+      if (k >= 32 && k < 64) hit(band, t + 0.25, 'snare', 0.5);
+    }
+    const track = findBeats(onsetStrength(band, SR), seconds, { drums: true, bpm: 120 });
+    expect(worstMiss(track, times)).toBeLessThan(0.045);
+  });
+
+  it('follows a drummer whose tempo wanders from bar to bar', () => {
+    // A slow random walk of ±3% around 100 BPM, a new tempo every bar.
+    let seed = 7;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    const times: number[] = [];
+    let bpm = 100;
+    for (let t = 0.5; t < 38; ) {
+      for (let k = 0; k < 4; k++, t += 60 / bpm) times.push(t);
+      bpm = Math.min(103, Math.max(97, bpm + (random() - 0.5) * 3));
+    }
+    const band = new Float32Array(40 * SR);
+    times.forEach((t, k) => hit(band, t, k % 2 === 0 ? 'kick' : 'snare'));
+    const track = findBeats(onsetStrength(band, SR), 40, { drums: true });
+    expect(worstMiss(track, times)).toBeLessThan(0.03);
+  });
 });
 
 describe('notes on the beat grid', () => {

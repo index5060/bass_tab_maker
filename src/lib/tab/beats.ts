@@ -137,22 +137,31 @@ export interface BeatTrack {
 }
 
 /**
+ * How hard the tracker holds the tempo (see trackBeats). At librosa's 100 a beat slides onto the
+ * off-beat wherever the off-beat is louder for a while — an eighth-note hi-hat, a pushed riff —
+ * and stays there for bars. Measured on the 14 Slakh songs whose MIDI sits on a beat grid: at 100,
+ * 46 such slips and a beat F-measure of 82%; at 1600, none and 89%. Twice that again pulled the
+ * one song with real tempo changes (Track00018) off its beats.
+ */
+const TIGHTNESS = 1600;
+
+/**
  * Dynamic-programming beat tracking.
  *
  * Every frame gets the best score of any beat sequence ending there: its own onset strength
  * plus the best predecessor, penalised by how far the gap strays from the expected period on
- * a log scale. `tightness` sets how hard tempo is held — 100 (librosa's default) still lets a
- * drummer wander a few percent from bar to bar, which is the point.
+ * a log scale. `tightness` sets how hard tempo is held (TIGHTNESS): a beat may still come a
+ * few percent early or late to follow the drummer, but not drift half a beat over a few bars.
  */
 export function trackBeats(
   onset: OnsetStrength,
   durationSeconds: number,
-  options: { tightness?: number; tempo?: TempoEstimate } = {},
+  options: { tightness?: number; tempo?: TempoEstimate; followDrift?: boolean } = {},
 ): BeatTrack {
   const { envelope, hop, offset } = onset;
   const tempo = options.tempo ?? estimateTempo(envelope, hop);
   const period = tempo.period;
-  const tightness = options.tightness ?? 100;
+  const tightness = options.tightness ?? TIGHTNESS;
   const n = envelope.length;
 
   // Normalise, then smear each onset over a narrow Gaussian so the DP can land a beat a frame
@@ -287,6 +296,11 @@ export function trackBeats(
     kept = kept.slice(cut);
   }
 
+  // Which beats to keep is settled on the tight chain; only then may they follow the drift
+  // (moved first, beats the tight chain had lost at the end of a song looked steady enough to
+  // keep: measured, a ±12% wander's last six beats kept half a beat off).
+  if (options.followDrift) kept = followDrift(kept, local, Math.round(DRIFT_REACH * period), DRIFT_HOLD);
+
   // Sub-frame timing from the shape of the onset peak around each beat.
   const times = kept.map((f) => {
     let shift = 0;
@@ -301,6 +315,61 @@ export function trackBeats(
   });
 
   return extendBeats(times, durationSeconds, tempo);
+}
+
+/** How far (in beats) the second pass may move a beat from where the first put it. */
+const DRIFT_REACH = 0.1;
+/** How hard the second pass holds each gap to the first pass's (librosa's default). */
+const DRIFT_HOLD = 100;
+
+/**
+ * Second pass: the tight first pass settles which onsets are the beats; this lets each beat
+ * move a little from where it put it, held only loosely, so the beats follow a drummer who
+ * drifts from bar to bar. Sliding onto the off-beat (half a beat) or a sixteenth (a quarter)
+ * stays out of reach. Measured: the funk test song with its tempo wandering ±3 BPM bar to bar,
+ * 87% of notes right with the tight pass alone and 98% with this; Slakh's beats unchanged.
+ */
+function followDrift(frames: number[], local: Float64Array, reach: number, hold: number): number[] {
+  const m = frames.length;
+  if (m < 3 || reach < 1) return frames;
+  const width = 2 * reach + 1;
+  const at = (k: number, j: number) => frames[k] + j - reach;
+  const score = new Float64Array(m * width).fill(-Infinity);
+  const back = new Int32Array(m * width);
+  for (let j = 0; j < width; j++) {
+    const f = at(0, j);
+    if (f >= 0 && f < local.length) score[j] = local[f];
+  }
+  for (let k = 1; k < m; k++) {
+    const expected = Math.log(frames[k] - frames[k - 1]);
+    for (let j = 0; j < width; j++) {
+      const f = at(k, j);
+      if (f < 0 || f >= local.length) continue;
+      let best = -Infinity;
+      let bestAt = 0;
+      for (let i = 0; i < width; i++) {
+        const gap = f - at(k - 1, i);
+        if (gap <= 0 || score[(k - 1) * width + i] === -Infinity) continue;
+        const s = score[(k - 1) * width + i] - hold * (Math.log(gap) - expected) ** 2;
+        if (s > best) {
+          best = s;
+          bestAt = i;
+        }
+      }
+      if (best === -Infinity) continue;
+      score[k * width + j] = local[f] + best;
+      back[k * width + j] = bestAt;
+    }
+  }
+  let j = 0;
+  for (let i = 1; i < width; i++) if (score[(m - 1) * width + i] > score[(m - 1) * width + j]) j = i;
+  if (score[(m - 1) * width + j] === -Infinity) return frames;
+  const out = new Array<number>(m);
+  for (let k = m - 1; k >= 0; k--) {
+    out[k] = at(k, j);
+    j = back[k * width + j];
+  }
+  return out;
 }
 
 /**

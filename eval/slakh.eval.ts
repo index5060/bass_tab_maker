@@ -201,6 +201,73 @@ function beatF1(tracked: number[], midi: Midi, from: number, to: number): number
   return f1(matchCount(truth, predicted, () => true, BEAT_TOLERANCE), truth.length, predicted.length);
 }
 
+/** Where in a beat a part written to the grid plays: straight sixteenths and triplet eighths. */
+const GRID_PLACES = [0, 1 / 4, 1 / 3, 1 / 2, 2 / 3, 3 / 4, 1];
+
+/** Share of the notes on a grid place, within a twenty-fourth of a beat. */
+function onBeatGrid(midis: Midi[]): number {
+  const ppq = midis[0].header.ppq;
+  const ticks = midis.flatMap((m) => m.tracks.flatMap((t) => t.notes.map((n) => n.ticks)));
+  const on = ticks.filter((tick) => {
+    const place = (tick % ppq) / ppq;
+    return GRID_PLACES.some((p) => Math.abs(place - p) <= 1 / 24);
+  });
+  return on.length / Math.max(1, ticks.length);
+}
+
+/**
+ * Whether the MIDI's beats are the song's. Some Lakh files were played in rather than written:
+ * notes wherever the player put them, against a grid at a tempo nobody kept (measured: Track00009,
+ * 13 and 20, half their bass and drum notes off every grid place; Track00016's drums 78% on).
+ * Their beat times cannot score a beat tracker, nor their bar lines a metre. A song counts when
+ * its bass is on the grid (95%) and its drums too (90%: fills and flams sit between places).
+ */
+function beatsTrusted(bass: Midi[], drums: Midi[]): boolean {
+  return drums.length > 0 && onBeatGrid(bass) >= 0.95 && onBeatGrid(drums) >= 0.9;
+}
+
+/** The MIDI's downbeats up to `to`, bar by bar through its time signatures. */
+function downbeats(midi: Midi, to: number): number[] {
+  const ppq = midi.header.ppq;
+  const signatures = midi.header.timeSignatures.length ? midi.header.timeSignatures : [{ ticks: 0, timeSignature: [4, 4] }];
+  const out: number[] = [];
+  for (let k = 0; k < signatures.length; k++) {
+    const [count, unit] = signatures[k].timeSignature;
+    const bar = (count * ppq * 4) / unit;
+    const end = k + 1 < signatures.length ? signatures[k + 1].ticks : Infinity;
+    for (let tick = signatures[k].ticks; tick < end; tick += bar) {
+      const time = midi.header.ticksToSeconds(tick);
+      if (time > to) return out;
+      out.push(time);
+    }
+  }
+  return out;
+}
+
+/**
+ * Bar lines: of ours inside the music, the share on a MIDI downbeat (what the tab shows) — and,
+ * of those on a MIDI beat at all, the share on a downbeat (the metre's own part in it).
+ */
+function barLines(analysis: TabAnalysis, midi: Midi, from: number, to: number): { all: number; ofBeats: number } {
+  const { beatsPerBar, downbeatPhase } = analysis.meter;
+  const ours: number[] = [];
+  for (let i = analysis.firstTracked; i <= analysis.lastTracked; i++) {
+    const t = analysis.beats[i];
+    if ((((i - downbeatPhase) % beatsPerBar) + beatsPerBar) % beatsPerBar === 0 && t >= from - BEAT_TOLERANCE && t <= to + BEAT_TOLERANCE) ours.push(t);
+  }
+  const beatTimes: number[] = [];
+  for (let tick = 0; ; tick += midi.header.ppq) {
+    const time = midi.header.ticksToSeconds(tick);
+    if (time > to + 1) break;
+    beatTimes.push(time);
+  }
+  const near = (times: number[], t: number) => times.some((x) => Math.abs(x - t) <= BEAT_TOLERANCE);
+  const bars = downbeats(midi, to + 1);
+  const onBeat = ours.filter((t) => near(beatTimes, t));
+  const onBar = onBeat.filter((t) => near(bars, t));
+  return { all: onBar.length / Math.max(1, ours.length), ofBeats: onBar.length / Math.max(1, onBeat.length) };
+}
+
 function predictedNotes(analysis: TabAnalysis): TimedNote[] {
   const times = slotTimesFor(analysis.beats, analysis.subdivision);
   return analysis.notes.map((n) => ({ time: times[n.startSlot], midi: n.midi })).filter((n) => Number.isFinite(n.time));
@@ -228,6 +295,8 @@ it('Slakh 채점', () => {
     .sort();
   const rows: string[] = [];
   const totals = new Map<string, Counts & { beat: number[] }>();
+  // Beats and bar lines, over the songs whose MIDI beats can be trusted (beatsTrusted).
+  const timing = new Map<string, { beat: number[]; bars: number[]; barsOfBeats: number[]; tracks: string[] }>();
 
   for (const track of tracks) {
     const dir = path.join(ROOT, track);
@@ -266,6 +335,7 @@ it('Slakh 채점', () => {
     const firstNote = truth[0]?.time ?? 0;
     const lastNote = truth[truth.length - 1]?.time ?? 0;
     const midiBpm = midis[0].header.tempos[0]?.bpm ?? 0;
+    const trusted = beatsTrusted(midis, stems.filter((s) => s.rendered && s.isDrum).map(midiOf));
     const programs = bassStems.map((s) => s.program).join('+');
 
     for (const condition of CONDITIONS) {
@@ -283,12 +353,24 @@ it('Slakh 채점', () => {
       total.pitchClass += counts.pitchClass;
       total.beat.push(beat);
       totals.set(condition.name, total);
+      const bars = barLines(analysis, midis[0], firstNote, lastNote);
+      if (trusted) {
+        const t = timing.get(condition.name) ?? { beat: [], bars: [], barsOfBeats: [], tracks: [] };
+        t.beat.push(beat);
+        t.bars.push(bars.all);
+        t.barsOfBeats.push(bars.ofBeats);
+        t.tracks.push(track.replace('Track000', ''));
+        timing.set(condition.name, t);
+      }
       rows.push(
         `${track} ${condition.name.padEnd(12)} 음 F1 ${pct(f1(counts.note, counts.truth, counts.predicted))}` +
           ` · 시작만 ${pct(f1(counts.onset, counts.truth, counts.predicted))}` +
           ` · 음이름 ${pct(f1(counts.pitchClass, counts.truth, counts.predicted))}` +
-          ` · 박 ${pct(beat)} · 정답 ${String(counts.truth).padStart(4)} 예측 ${String(counts.predicted).padStart(4)}` +
-          ` · 템포 ${analysis.bpm.toFixed(0)}/${midiBpm.toFixed(0)} · ${analysis.meter.beatsPerBar}/4 · 프로그램 ${programs}` +
+          ` · 박 ${pct(beat)}` +
+          (trusted ? ` · 마디선 ${pct(bars.all)}` : ' · (MIDI 박 못 믿음)') +
+          ` · 정답 ${String(counts.truth).padStart(4)} 예측 ${String(counts.predicted).padStart(4)}` +
+          ` · 템포 ${analysis.bpm.toFixed(0)}/${midiBpm.toFixed(0)} · ${analysis.meter.beatsPerBar}/4 (첫 박 확신 ${analysis.meter.confidence.toFixed(2)})` +
+          ` · 프로그램 ${programs}` +
           ` · MIDI→소리 ${shifts.map((v) => (v > 0 ? `+${v}` : String(v))).join(',')}` +
           (skipped.length ? ` · 화음 스템 ${skipped.join(',')} 제외` : '') +
           ` (${((Date.now() - started) / 1000).toFixed(1)}s)`,
@@ -302,7 +384,24 @@ it('Slakh 채점', () => {
       ` · 음이름 ${pct1(f1(t.pitchClass, t.truth, t.predicted))} · 박 평균 ${pct(t.beat.reduce((a, b) => a + b, 0) / Math.max(1, t.beat.length))}` +
       ` · 정답 ${t.truth} 예측 ${t.predicted}`,
   );
-  const report = ['', 'Slakh (BabySlakh) — 음은 시작 ±50ms·음높이 일치, 박은 ±70ms', ...rows, '', '전체 (곡을 합쳐 셈)', ...summary, ''].join('\n');
+  const mean = (values: number[]) => values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
+  const timingSummary = [...timing.entries()].map(
+    ([name, t]) =>
+      `${name.padEnd(12)} 박 평균 ${pct1(mean(t.beat))} · 마디선 평균 ${pct1(mean(t.bars))} (박이 맞은 마디선 중 ${pct1(mean(t.barsOfBeats))})`,
+  );
+  const trustedTracks = [...timing.values()][0]?.tracks ?? [];
+  const report = [
+    '',
+    'Slakh (BabySlakh) — 음은 시작 ±50ms·음높이 일치, 박은 ±70ms',
+    ...rows,
+    '',
+    '전체 (곡을 합쳐 셈)',
+    ...summary,
+    '',
+    `MIDI 박이 확실한 ${trustedTracks.length}곡 (${trustedTracks.join(' ')}) — 박과 마디선, 곡 평균`,
+    ...timingSummary,
+    '',
+  ].join('\n');
   fs.mkdirSync(path.join(import.meta.dirname, 'out'), { recursive: true });
   fs.writeFileSync(path.join(import.meta.dirname, 'out', 'slakh-report.txt'), report);
 });
