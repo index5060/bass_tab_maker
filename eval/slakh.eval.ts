@@ -212,6 +212,8 @@ const CONDITIONS: Array<{ name: string; bleed: number }> = [
 ];
 
 const pct = (v: number) => `${Math.round(v * 100)}%`.padStart(5);
+/** Totals move by fractions of a point between changes worth keeping: one decimal there. */
+const pct1 = (v: number) => `${(v * 100).toFixed(1)}%`.padStart(6);
 
 it('Slakh 채점', () => {
   if (!fs.existsSync(ROOT)) {
@@ -296,8 +298,8 @@ it('Slakh 채점', () => {
 
   const summary = [...totals.entries()].map(
     ([name, t]) =>
-      `${name.padEnd(12)} 음 F1 ${pct(f1(t.note, t.truth, t.predicted))} · 시작만 ${pct(f1(t.onset, t.truth, t.predicted))}` +
-      ` · 음이름 ${pct(f1(t.pitchClass, t.truth, t.predicted))} · 박 평균 ${pct(t.beat.reduce((a, b) => a + b, 0) / Math.max(1, t.beat.length))}` +
+      `${name.padEnd(12)} 음 F1 ${pct1(f1(t.note, t.truth, t.predicted))} · 시작만 ${pct1(f1(t.onset, t.truth, t.predicted))}` +
+      ` · 음이름 ${pct1(f1(t.pitchClass, t.truth, t.predicted))} · 박 평균 ${pct(t.beat.reduce((a, b) => a + b, 0) / Math.max(1, t.beat.length))}` +
       ` · 정답 ${t.truth} 예측 ${t.predicted}`,
   );
   const report = ['', 'Slakh (BabySlakh) — 음은 시작 ±50ms·음높이 일치, 박은 ±70ms', ...rows, '', '전체 (곡을 합쳐 셈)', ...summary, ''].join('\n');

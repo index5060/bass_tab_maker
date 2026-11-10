@@ -166,6 +166,8 @@ const REPLUCK_FALL = -3;
 const REPLUCK_RISE = 3;
 /** How far either side (s) the pluck yardstick is taken from: a section, not the whole song. */
 const TYPICAL_REACH = 20;
+/** A pitch reading this much less sure than a note's surest one is not counted (see voted). */
+const LESS_SURE = 0.1;
 
 /** What the decoder saw in one slot — for diagnosing a wrong tab, not for normal use. */
 export interface SlotTrace {
@@ -320,8 +322,8 @@ export function decodeBassLine(
   //    one when the pitch changes, or — for the same pitch struck again — when the level rises
   //    with it; a clear, held change of pitch without an attack (a hammer-on, a slide's
   //    arrival) starts one too.
-  const notes: Array<GridNote & { pitches: number[] }> = [];
-  let current: (GridNote & { pitches: number[] }) | null = null;
+  const notes: Array<GridNote & { readings: PitchReading[] }> = [];
+  let current: (GridNote & { readings: PitchReading[] }) | null = null;
   const close = (at: number) => {
     if (current) {
       current.endSlot = at;
@@ -339,7 +341,7 @@ export function decodeBassLine(
     }
     const midi = attackAt[i] > 0 ? pitchAfter(i) : slotMidi(i);
     const sure = attackAt[i] > 0 ? midi > 0 : confident(i);
-    const held = current && current.pitches.length ? median(current.pitches) : -1;
+    const held = current && current.readings.length ? voted(current.readings) : -1;
     // An exact octave move is not trusted on its own: YIN reads an octave low for a moment
     // right after a pluck (measured: Db2 read as Db1 once, 20ms in) — and that slip had been
     // splitting the note in two. A slip lasts one reading; an octave played on purpose is
@@ -377,12 +379,12 @@ export function decodeBassLine(
     trace(starts ? 'start' : 'continue', reason);
     if (starts) {
       close(i);
-      current = { startSlot: i, endSlot: i + 1, midi: -1, confidence: 0, pitches: [] };
+      current = { startSlot: i, endSlot: i + 1, midi: -1, confidence: 0, readings: [] };
     }
     // A note's pitch is what it sounds like over its first two slots: later ones are decay,
-    // and decay is where the octave slips happen.
+    // and decay is where the octave slips happen. See voted() for how the readings are weighed.
     if (current && confident(i) && i - current.startSlot < 2) {
-      current.pitches.push(slotMidi(i));
+      current.readings.push({ midi: slotMidi(i), confidence: pitchConfidence[i], amplitude: 10 ** (levels[i] / 20) });
       current.confidence = Math.max(current.confidence, pitchConfidence[i]);
     }
   }
@@ -392,8 +394,8 @@ export function decodeBassLine(
   let octaveShifted = 0;
   const out: GridNote[] = [];
   for (const n of notes) {
-    if (!n.pitches.length) continue;
-    let midi = median(n.pitches);
+    if (!n.readings.length) continue;
+    let midi = voted(n.readings);
     // A standard-tuned 4-string bass goes from E1 (28) to about G4 (67). Below that it is a
     // detector slip an octave down, above it most likely a harmonic.
     while (midi < 28) {
@@ -418,6 +420,36 @@ export function decodeBassLine(
       octaveShifted,
     },
   };
+}
+
+interface PitchReading {
+  midi: number;
+  confidence: number;
+  /** Linear RMS of the slot it was read in. */
+  amplitude: number;
+}
+
+/**
+ * The pitch a note's readings agree on.
+ *
+ * A reading far less sure than the surest one does not count: where two readings of a note
+ * disagree, the wrong one is the less sure, whichever slot it is in (measured on Slakh: right
+ * after a pluck YIN reads an octave and a fifth low, or a semitone off, at 0.7-0.87 against
+ * 0.99 a slot later; a short note's second slot, already dying away, reads a semitone sharp
+ * at 0.82-0.86 against 1.0 on the pluck). Of the rest, the louder counts for more — taking
+ * the median of two readings had picked the higher one, and made half of Track00019's 0.1s
+ * notes a semitone sharp. Votes are by note name, in the highest octave it was read in:
+ * YIN's octave slips are downward (measured: Db2 read as Db1 20ms in).
+ */
+function voted(readings: PitchReading[]): number {
+  const surest = Math.max(...readings.map((r) => r.confidence));
+  const counted = readings.filter((r) => r.confidence >= surest - LESS_SURE);
+  const pc = (midi: number) => ((midi % 12) + 12) % 12;
+  const totals = new Map<number, number>();
+  for (const r of counted) totals.set(pc(r.midi), (totals.get(pc(r.midi)) ?? 0) + r.amplitude);
+  let best = pc(counted[0].midi);
+  for (const [cls, weight] of totals) if (weight > totals.get(best)!) best = cls;
+  return Math.max(...counted.filter((r) => pc(r.midi) === best).map((r) => r.midi));
 }
 
 function median(values: number[]): number {
