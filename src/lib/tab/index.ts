@@ -17,7 +17,8 @@
  */
 
 import { onsetStrength } from './beats';
-import { decodeBassLine, slotTimesFor, type GridNote } from './notes';
+import { bassAttacks, decodeBassLine, MIXED_GRID, slotTimesFor, type GridNote } from './notes';
+import { chooseDivisions, type BeatDivision } from './feel';
 import { findMeter, type Meter } from './meter';
 import { findBeats, type BeatChoice } from './tempo';
 import { assignFrets, type FrettedNote } from './frets';
@@ -48,6 +49,11 @@ export interface TabAnalysis {
   /** Notes on the grid of `beats`: slot = beat index × subdivision + position in the beat. */
   notes: GridNote[];
   subdivision: number;
+  /**
+   * How each beat was divided: 4 (sixteenths) or 3 (triplet eighths), see feel.ts. Absent in
+   * analyses saved before triplets were read: every beat in four.
+   */
+  divisions?: BeatDivision[];
   meter: Meter;
   /** How far the recording sits from A=440 (cents). */
   tuningCents: number;
@@ -76,8 +82,6 @@ export interface TabResult {
   bars: number;
 }
 
-const SUBDIVISION = 4;
-
 /** RMS of every 8th sample: plenty to compare two signals' levels, at an eighth of the cost. */
 function roughRms(signal: Float32Array): number {
   let sum = 0;
@@ -101,10 +105,12 @@ export function analyseTab(input: TabInput, onStage?: (stage: AnalysisStage) => 
   const track = findBeats(onset, durationSeconds, { bpm: input.bpm, drums: band !== null });
 
   onStage?.('notes');
-  const line = decodeBassLine(bass, sampleRate, track.beats, { subdivision: SUBDIVISION, band });
+  const attacks = bassAttacks(bass, sampleRate, band);
+  const divisions = chooseDivisions(track.beats, attacks);
+  const line = decodeBassLine(bass, sampleRate, track.beats, { divisions, attacks, band });
 
   onStage?.('bars');
-  const meter = findMeter(track.beats, line.notes, SUBDIVISION, band ? onset : null, {
+  const meter = findMeter(track.beats, line.notes, line.subdivision, band ? onset : null, {
     first: track.firstTracked,
     last: track.lastTracked,
   });
@@ -115,7 +121,8 @@ export function analyseTab(input: TabInput, onStage?: (stage: AnalysisStage) => 
     lastTracked: track.lastTracked,
     bpm: track.bpm,
     notes: line.notes,
-    subdivision: SUBDIVISION,
+    subdivision: line.subdivision,
+    divisions,
     meter,
     tuningCents: line.tuningCents,
     beatSource: band ? 'band' : 'bass',
@@ -133,7 +140,12 @@ export function writeTabFrom(
   analysis: TabAnalysis,
   options: { title: string; beatsPerBar?: number; downbeatPhase?: number },
 ): TabResult {
-  const sub = analysis.subdivision;
+  // The writer works on MIXED_GRID: analyses saved before triplets were read have every beat
+  // in four, on a grid of four.
+  const scale = MIXED_GRID / analysis.subdivision;
+  const sub = MIXED_GRID;
+  const scaledNotes = analysis.notes.map((n) => ({ ...n, startSlot: n.startSlot * scale, endSlot: n.endSlot * scale }));
+  const sourceDivisions: number[] = analysis.divisions ?? analysis.beats.map(() => 4);
   const m = options.beatsPerBar ?? analysis.meter.beatsPerBar;
   let phase = options.downbeatPhase;
   if (phase === undefined) {
@@ -157,9 +169,9 @@ export function writeTabFrom(
   // whole song one bar late (measured, with and without silence in front of the music).
   // A real pickup — a fill or a lead-in note before bar 1 — has sound in it and stays.
   const slotTimes = slotTimesFor(source, sub);
-  const firstNote = analysis.notes.length ? slotTimes[analysis.notes[0].startSlot] : Infinity;
+  const firstNote = scaledNotes.length ? slotTimes[scaledNotes[0].startSlot] : Infinity;
   const firstSound = Math.min(source[analysis.firstTracked] ?? Infinity, firstNote);
-  const noteBefore = (beat: number) => analysis.notes.some((n) => n.startSlot + pad * sub < beat * sub);
+  const noteBefore = (beat: number) => scaledNotes.some((n) => n.startSlot + pad * sub < beat * sub);
   let dropBars = 0;
   while (
     beats.length > (dropBars + 2) * m &&
@@ -169,8 +181,9 @@ export function writeTabFrom(
     dropBars++;
   }
   beats = beats.slice(dropBars * m);
+  const divisions = [...padding.map(() => 4), ...sourceDivisions].slice(dropBars * m);
   const shift = (pad - dropBars * m) * sub;
-  const notes: GridNote[] = analysis.notes
+  const notes: GridNote[] = scaledNotes
     .map((n) => ({ ...n, startSlot: n.startSlot + shift, endSlot: n.endSlot + shift }))
     .filter((n) => n.startSlot >= 0);
 
@@ -181,6 +194,7 @@ export function writeTabFrom(
     beats,
     beatsPerBar: m,
     subdivision: sub,
+    divisions,
     trackedBeats: {
       first: analysis.firstTracked + pad - dropBars * m,
       last: analysis.lastTracked + pad - dropBars * m,

@@ -29,8 +29,9 @@ export interface GridNote {
 
 export interface DecodedLine {
   notes: GridNote[];
+  /** Slots per beat of the grid `notes` are on. */
   subdivision: number;
-  /** Start time (s) of every slot; slot i lasts until slotTimes[i + 1]. */
+  /** Start time (s) of every slot the decoder read (uneven where beats are divided differently). */
   slotTimes: number[];
   /** How far the recording sits from A=440, in cents, already removed from `notes`. */
   tuningCents: number;
@@ -41,16 +42,26 @@ export interface DecodedLine {
   };
 }
 
-/** Slot start times for a beat list: each beat split into `subdivision` equal parts. */
-export function slotTimesFor(beats: number[], subdivision: number): number[] {
+/**
+ * Slot start times for a beat list: each beat split into `subdivision` equal parts — or, given
+ * a division per beat, beat k into `divisions[k]`.
+ */
+export function slotTimesFor(beats: number[], subdivision: number, divisions?: readonly number[]): number[] {
   const out: number[] = [];
   for (let k = 0; k < beats.length; k++) {
     const next = k + 1 < beats.length ? beats[k + 1] : beats[k] + (beats[k] - beats[k - 1]);
-    const step = (next - beats[k]) / subdivision;
-    for (let j = 0; j < subdivision; j++) out.push(beats[k] + j * step);
+    const parts = divisions?.[k] ?? subdivision;
+    const step = (next - beats[k]) / parts;
+    for (let j = 0; j < parts; j++) out.push(beats[k] + j * step);
   }
   return out;
 }
+
+/**
+ * Slots per beat of the grid notes are reported on when beats are divided differently (some
+ * in four, some in three): twelve has both a sixteenth (3) and a triplet eighth (4).
+ */
+export const MIXED_GRID = 12;
 
 /** A string being struck, as the bass stem's spectrum shows it. */
 export interface Attack {
@@ -154,6 +165,13 @@ const YIN_SECONDS = 0.058;
 /** Measure pitch this long after the slot starts, past the pick's click. */
 const PITCH_DELAY = 0.02;
 /**
+ * ...or this long after the slot's attack, when the attack came after the slot started: a
+ * window from the slot's start would still hold the note before. A little longer than from
+ * the slot, since it starts right on the pluck's click (measured: a slap line 83% at 20ms,
+ * 97% at 30ms, worse again at 40ms).
+ */
+const AFTER_ATTACK = 0.03;
+/**
  * The same note struck again (or its octave): its attack must be at least this fraction of a
  * typical pluck on this recording. Measured over four songs and five bass sounds: real
  * re-plucks 0.4-2.6 of typical, everything else that peaks inside a held note (a pluck's own
@@ -189,11 +207,32 @@ export function decodeBassLine(
   bass: Float32Array,
   sampleRate: number,
   beats: number[],
-  options: { subdivision?: number; band?: Float32Array | null; trace?: (slot: SlotTrace) => void } = {},
+  options: {
+    subdivision?: number;
+    /** Slots in each beat (4 straight, 3 triplet; see feel.ts); notes then come on MIXED_GRID. */
+    divisions?: readonly number[];
+    /** The stem's attacks, when the caller has them already (bassAttacks of the same input). */
+    attacks?: Attack[];
+    band?: Float32Array | null;
+    trace?: (slot: SlotTrace) => void;
+  } = {},
 ): DecodedLine {
   const subdivision = options.subdivision ?? 4;
-  const slotTimes = slotTimesFor(beats, subdivision);
+  const divisions = options.divisions;
+  const slotTimes = slotTimesFor(beats, subdivision, divisions);
   const slots = slotTimes.length;
+  // Where each slot is on the grid the notes are reported on: slot j of beat k is
+  // k * unit + j * (unit / slots in beat k). With one division throughout, that is the slot.
+  const unit = divisions ? MIXED_GRID : subdivision;
+  const reported = new Int32Array(slots + 1);
+  {
+    let i = 0;
+    for (let k = 0; k < beats.length; k++) {
+      const parts = divisions?.[k] ?? subdivision;
+      for (let j = 0; j < parts; j++) reported[i++] = k * unit + (j * unit) / parts;
+    }
+    reported[slots] = beats.length * unit;
+  }
   const slotEnd = (i: number) => (i + 1 < slots ? slotTimes[i + 1] : slotTimes[i] + (slotTimes[i] - slotTimes[i - 1]));
 
   // 1. Attacks, each given to the nearest slot, with how the level moved across it.
@@ -201,14 +240,17 @@ export function decodeBassLine(
   const yinRate = sampleRate / divisor;
   const low = decimate(bass, divisor);
   const yinWindow = Math.round(YIN_SECONDS * yinRate);
-  const attacks = bassAttacks(bass, sampleRate, options.band);
+  const attacks = options.attacks ?? bassAttacks(bass, sampleRate, options.band);
   const attackAt = new Float64Array(slots);
   const riseAt = new Float64Array(slots);
+  /** When the slot's attack came (s), where it has one. */
+  const attackTime = new Float64Array(slots).fill(NaN);
   let slot = 0;
   for (const a of attacks) {
     while (slot + 1 < slots && Math.abs(slotTimes[slot + 1] - a.time) <= Math.abs(slotTimes[slot] - a.time)) slot++;
     if (a.strength > attackAt[slot]) {
       attackAt[slot] = a.strength;
+      attackTime[slot] = a.time;
       // 50ms is two periods of a low E: long enough that the level does not ripple with the
       // waveform, short enough to stay inside a sixteenth.
       riseAt[slot] = levelDb(low, yinRate, a.time + 0.005, a.time + 0.055) - levelDb(low, yinRate, a.time - 0.055, a.time - 0.005);
@@ -252,7 +294,12 @@ export function decodeBassLine(
   const pitchConfidence = new Float64Array(slots);
   for (let i = 0; i < slots; i++) {
     if (isSilent(i)) continue;
-    const start = Math.floor((slotTimes[i] + PITCH_DELAY) * yinRate);
+    // From the attack where the slot has one that came late: read from the slot's start, the
+    // window still holds the note before (measured: Slakh Track00001, attacks 30-45ms after
+    // their triplet places — every pitch change there read as the old note, and 150 notes
+    // were lost; over all 19 Slakh songs, note F1 went from 84% to 91%).
+    const late = Number.isFinite(attackTime[i]) && attackTime[i] > slotTimes[i];
+    const start = Math.floor((late ? attackTime[i] + AFTER_ATTACK : slotTimes[i] + PITCH_DELAY) * yinRate);
     if (start < 0 || start + yinWindow > low.length) continue;
     const result = detectPitch(low.subarray(start, start + yinWindow), { sampleRate: yinRate, minHz: 35, maxHz: 500 });
     pitchHz[i] = result.hz;
@@ -406,12 +453,12 @@ export function decodeBassLine(
       midi -= 12;
       octaveShifted++;
     }
-    out.push({ startSlot: n.startSlot, endSlot: n.endSlot, midi, confidence: n.confidence });
+    out.push({ startSlot: reported[n.startSlot], endSlot: reported[n.endSlot], midi, confidence: n.confidence });
   }
 
   return {
     notes: out,
-    subdivision,
+    subdivision: unit,
     slotTimes,
     tuningCents,
     stats: {

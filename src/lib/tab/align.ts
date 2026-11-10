@@ -59,15 +59,14 @@ const QUARTER = 960;
 /** Slots per unit: where a note starts is compared to the sixteenth. */
 const SLOTS = 4;
 /**
- * The recording grids tried, as [analysis slots per unit, first slot]: a quarter note is a
- * beat, half a beat, or two beats (which can start on either beat of the pair). The analysis
- * reads four slots per beat.
+ * The recording grids tried, as [beats per unit, first beat]: a quarter note is a beat, half a
+ * beat, or two beats (which can start on either beat of the pair).
  */
 const GRIDS: ReadonlyArray<readonly [number, number]> = [
-  [4, 0],
+  [1, 0],
+  [0.5, 0],
   [2, 0],
-  [8, 0],
-  [8, 4],
+  [2, 1],
 ];
 /**
  * Cost of each unit one side skips: a beat the tracker missed or added, a bar the recording
@@ -342,11 +341,11 @@ export function alignScore(bars: ScoreBar[], analysis: TabAnalysis): AlignResult
   if (firstNote < 0) return null;
 
   let best: { warp: Warp; grid: Grid } | null = null;
-  for (const [slotsPerUnit, offset] of GRIDS) {
+  for (const [beatsPerUnit, firstBeat] of GRIDS) {
     // A quarter note faster than 320 or slower than 30 is no reading of a tab.
-    const quarterBpm = (analysis.bpm * analysis.subdivision) / slotsPerUnit;
+    const quarterBpm = analysis.bpm / beatsPerUnit;
     if (quarterBpm > 320 || quarterBpm < 30) continue;
-    const grid = recordingGrid(analysis, slotsPerUnit, offset);
+    const grid = recordingGrid(analysis, beatsPerUnit * analysis.subdivision, firstBeat * analysis.subdivision);
     const result = warp(line, grid.units);
     if (result && (!best || result.fit > best.warp.fit)) best = { warp: result, grid };
   }
